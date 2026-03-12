@@ -6,6 +6,8 @@ import datetime
 import requests
 import re
 import json
+import asyncio
+from aiohttp import web
 from bs4 import BeautifulSoup
 from classroom_manager import ClassroomManager
 from quiz_manager import QuizManager
@@ -30,6 +32,7 @@ class CourseBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix='!', intents=intents)
         self.classroom_manager = ClassroomManager()
+        
         # Track weekly progress for channels. Format: {'channel_id': current_week_index}
         self.course_progress = {}
         self.processed_submissions = set()
@@ -39,25 +42,12 @@ class CourseBot(commands.Bot):
         self.user_emails = {} # {discord_id: 'email@gmail.com'}
         self.pending_emails = set() # {discord_id} waiting for email reply
         
-        # New State for Course Enrollment
-        self.active_course = None  # Dict of {id, name, link}
-        self.enrollment_end_time = None # datetime (timezone aware)
-        self.active_cohort_channel_id = None
-        self.pending_cohort_roster = set() # Set of discord user IDs that have fully onboarded
-        
-        # New State for Topic Timing
-        self.topic_start_time = {} # {channel_id: datetime}
-        self.reported_topics_15 = set() # {(channel_id, week_index)} - for promotion reminder
-        self.reported_topics_20 = set() # {(channel_id, week_index)} - for ask/quiz reminder
-        self.reported_topics_70 = set() # {(channel_id, week_index)}
-        self.reported_topics_75 = set() # {(channel_id, week_index)} - for owner material DM
-        self.reported_topics_80 = set() # {(channel_id, week_index)} - for posting quiz
-        self.reported_topics_90 = set() # {(channel_id, week_index)}
-        self.reported_topics_90_reminder = set() # {(channel_id, week_index)} - for weekly quiz reminder
-        
-        # New State for Quizzes
+        # In-memory session staging and caching
+        self.staged_courses = {} # {owner_id: Dict of {id, name, link}}
+        self.pending_cohort_roster = {} # {guild_id: Set of discord user IDs}
+        self.active_course_cache = {} # Cache instead of querying DB every time for name/id
         self.quiz_manager = QuizManager()
-        self.pending_owner_material = None # tuple: (course_id, week_index) to track what the owner is replying to
+        self.pending_owner_material = {} # {owner_id: (course_id, week_index)}
         self.weekly_scores = load_quiz_scores() # {(channel_id, week_index): {user_id: score}}
         self.active_quiz_messages = {} # {message_id: {'correct_index': int, 'channel_id': int, 'week_index': int}}
         self.reported_quiz_winners = set() # {(channel_id, week_index)}
@@ -65,10 +55,10 @@ class CourseBot(commands.Bot):
         self.quiz_responses = {} # {(channel_id, week_index): {q_num: {user_id: opt_index}}}
         
         # New State for Pre-Course Reminder
-        self.pre_start_reminder_sent = False
+        self.pre_start_reminder_sent = {} # {guild_id: bool}
 
-    def get_full_material_text(self, course_id, week_index):
-        materials = self.classroom_manager.get_course_work_materials(course_id)
+    def get_full_material_text(self, guild_id, course_id, week_index):
+        materials = self.classroom_manager.get_course_work_materials(guild_id, course_id)
         if not materials or week_index >= len(materials):
             return "General course material"
             
@@ -83,7 +73,7 @@ class CourseBot(commands.Bot):
                 file_title = file_info.get('title', 'Document')
                 if file_id:
                     print(f"Extracting text from attached Drive file: {file_title}")
-                    doc_text = self.classroom_manager.get_drive_file_text(file_id)
+                    doc_text = self.classroom_manager.get_drive_file_text(guild_id, file_id)
                     if doc_text:
                         text += f"\n\n--- Document: {file_title} ---\n{doc_text}\n"
                         
@@ -91,17 +81,53 @@ class CourseBot(commands.Bot):
 
 
 
+    async def oauth_callback(self, request):
+        code = request.query.get("code")
+        guild_id_str = request.query.get("state")
+        
+        if not code or not guild_id_str:
+            return web.Response(text="Missing code or guild_id in callback.", status=400)
+            
+        try:
+            guild_id = int(guild_id_str)
+            success = self.classroom_manager.exchange_code(guild_id, code)
+            if success:
+                return web.Response(text="Authentication successful! You can close this window and return to Discord to use !start_course.")
+            else:
+                return web.Response(text="Failed to exchange OAuth code.", status=500)
+        except Exception as e:
+            return web.Response(text=f"An error occurred: {e}", status=500)
+
+    async def start_web_server(self):
+        app = web.Application()
+        app.add_routes([web.get('/oauth2callback', self.oauth_callback)])
+        
+        runner = web.AppRunner(app)
+        await runner.setup()
+        port = int(os.environ.get("PORT", 8080))
+        site = web.TCPSite(runner, '0.0.0.0', port)
+        await site.start()
+        print(f"Web server started on port {port} for OAuth callbacks.")
+
     async def setup_hook(self):
+        # Initialize Database
+        import database
+        database.init_db()
+        print("Database initialized.")
+        
         # Load Cogs
         await self.load_extension('cogs.course_tasks')
         await self.load_extension('cogs.course_commands')
             
         app_info = await self.application_info()
-        self.owner_id = app_info.owner.id
+        if app_info.team:
+            self.owner_id = app_info.team.owner_id
+        else:
+            self.owner_id = app_info.owner.id
         print(f"Logged in as {self.user} (ID: {self.user.id}), Owner: {self.owner_id}")
-        print("Authenticating with Google Classroom...")
-        self.classroom_manager.authenticate()
-        print("Google Classroom connected!")
+        
+        # Start the background web server for OAuth
+        self.loop.create_task(self.start_web_server())
 
 bot = CourseBot()
 
@@ -133,9 +159,9 @@ async def on_guild_join(guild):
     welcome_message = (
         f"**Welcome to Study Together!** Thanks for adding me to **{guild.name}**.\n\n"
         "Here is what you can do to get started:\n"
-        "1. You could always check the status of your google classroom courses with `!start_course`.\n"
-        "2. To setup a course, please use each topic as cycle time you want to introduce for your course.\n"
-        "3. We suggest to run each course with a fast track, to see how it looks and validate data and orchestration.\n\n"
+        "1. Please go to any channel where you can manage course admin tasks and type `!setup_admin` to create a private admin channel.\n"
+        "2. Inside the private `#course-admin` channel, type `!auth_google` to link your Google Classroom account.\n"
+        "3. Once linked, you can use `!start_course` in `#course-admin` to choose a course and prepare it for announcements.\n\n"
         "I've also initialized dedicated analytics tracking just for your server!"
     )
 
@@ -165,12 +191,12 @@ async def on_raw_reaction_add(payload):
         if not member:
             return
             
-        if not bot.active_course or not bot.enrollment_end_time:
+        if not bot.active_course.get(guild.id) or not bot.enrollment_end_time.get(guild.id):
             return # Reaction to an old message or bot restarted
             
         # 4. Late Enrollment Check (After the Window Closes)
         now = datetime.datetime.now(datetime.timezone.utc)
-        if now > bot.enrollment_end_time:
+        if now > bot.enrollment_end_time[guild.id]:
             try:
                 await member.send("Hey, too late. Next time!")
             except discord.Forbidden:
@@ -178,7 +204,7 @@ async def on_raw_reaction_add(payload):
             return
 
         # Fetch topics (Materials titles) from the course
-        materials = bot.classroom_manager.get_course_work_materials(bot.active_course['id'])
+        materials = bot.classroom_manager.get_course_work_materials(bot.active_course[guild.id]['id'])
         topics = [m.get('title', 'Untitled') for m in materials] if materials else ["No topics found."]
         topics_list = "\n".join([f"- {t}" for t in topics])
 
@@ -190,7 +216,7 @@ async def on_raw_reaction_add(payload):
                 color=discord.Color.green()
             )
             embed.add_field(name="Course Topics", value=topics_list, inline=False)
-            embed.add_field(name="Next Steps", value="Do you agree to the course requirements? If so, please type **'I agree'** in this chat.", inline=False)
+            embed.add_field(name="Next Steps", value=f"Do you agree to the course requirements for **{guild.name}**? If so, please type **'I agree'** in this chat.", inline=False)
             
             await member.send(embed=embed)
             print(f"Sent onboarding DM to {member.name}")
@@ -210,8 +236,8 @@ async def on_message(message):
     if isinstance(message.channel, discord.DMChannel):
         
         # Check if we are waiting for material from the owner
-        if message.author.id == bot.owner_id and bot.pending_owner_material:
-            course_id, week_index = bot.pending_owner_material
+        if message.author.id == bot.owner_id and bot.pending_owner_material.get(bot.owner_id):
+            course_id, week_index = bot.pending_owner_material[bot.owner_id]
             
             content_to_save = message.content.strip()
             
@@ -246,12 +272,25 @@ async def on_message(message):
                 content_to_save = "General course material"
                 
             bot.quiz_manager.save_material(course_id, week_index, content_to_save)
-            bot.pending_owner_material = None
+            del bot.pending_owner_material[bot.owner_id]
             await message.channel.send(f"✅ Material saved for Week {week_index + 1}. I will use this to generate the quizzes!")
             return
             
         # Check for Phase 3.5: User providing their email
         if message.author.id in bot.pending_emails:
+            # We must assume the guild context since it's a DM and the user responded
+            # If the user is only in one active course across all guilds, we can find it.
+            target_guild_id = None
+            for guild in bot.guilds:
+                if guild.id in bot.active_course and guild.id in bot.enrollment_end_time:
+                    target_guild_id = guild.id
+                    break
+                    
+            if not target_guild_id:
+                await message.channel.send("I couldn't find an active course enrollment for you. Please check with an admin.")
+                bot.pending_emails.remove(message.author.id)
+                return
+                
             provided_text = message.content.strip()
             
             # Extract email using regex
@@ -261,59 +300,70 @@ async def on_message(message):
                 extracted_email = email_match.group(0).lower()
                 bot.user_emails[message.author.id] = extracted_email
                 bot.pending_emails.remove(message.author.id)
-                bot.pending_cohort_roster.add(message.author.id)
-                
-                # Since this is a DM, we use the active cohort's guild
-                guild = bot.guilds[0]
-                guild_id = guild.id if guild else None
+                if target_guild_id not in bot.pending_cohort_roster:
+                    bot.pending_cohort_roster[target_guild_id] = set()
+                bot.pending_cohort_roster[target_guild_id].add(message.author.id)
                 
                 # Log email to global tracker
-                log_user_email(guild_id, message.author.id, message.author.name, extracted_email)
+                log_user_email(target_guild_id, message.author.id, message.author.name, extracted_email)
                 
                 # Invite to Google Classroom Course
                 try:
-                    bot.classroom_manager.invite_student(bot.active_course['id'], extracted_email)
+                    bot.classroom_manager.invite_student(bot.active_course[target_guild_id]['id'], extracted_email)
                     await message.channel.send(f"📧 I've sent a Google Classroom invitation to **{extracted_email}**. Please check your inbox and accept it!")
                 except Exception as e:
                     print(f"Failed to send Classroom invitation: {e}")
                     await message.channel.send(f"⚠️ I couldn't automatically invite you to Google Classroom. Please ask the instructor to add **{extracted_email}** manually.")
 
                 # Add the user to the existing channel
-                guild = bot.guilds[0]
-                member = guild.get_member(message.author.id)
-                cohort_channel = bot.get_channel(bot.active_cohort_channel_id)
-                
-                if cohort_channel and member:
-                    await cohort_channel.set_permissions(member, read_messages=True, send_messages=True)
-                    print(f"Added {member.name} to cohort channel")
+                guild = bot.get_guild(target_guild_id)
+                if guild:
+                    member = guild.get_member(message.author.id)
+                    cohort_channel_id = bot.active_cohort_channel_id.get(target_guild_id)
+                    cohort_channel = bot.get_channel(cohort_channel_id) if cohort_channel_id else None
                     
-                    # Phase 4: Send the Welcome Message (Only once per user)
-                    embed = discord.Embed(
-                        title=f"🎉 Welcome to {bot.active_course['name']}!",
-                        description=f"Hello {member.mention}! This is the private cohort channel.",
-                        color=discord.Color.gold()
-                    )
-                    
-                    schedule_text = (
-                        f"• **New Material**: Dropped every {TOPIC_CYCLE_MINUTES} minutes in this channel.\n"
-                        "• **Weekly Quiz**: A 5-question quiz will be posted near the end of the week.\n"
-                        "• **Practice**: You can DM me `!quiz` at any time to get a practice question based on the current week's material!\n"
-                        "• **Questions**: Use `!ask <your question>` in this channel or via DM to get AI-powered answers based on the material."
-                    )
-                    embed.add_field(name="Course Schedule & Features", value=schedule_text, inline=False)
-                    embed.add_field(name="Introduce Yourself", value="Please tell us a bit about yourself and why you're taking this course!", inline=False)
-                    
-                    await cohort_channel.send(embed=embed)
-                    await message.channel.send(f"✅ You're all set! Check out the <#{cohort_channel.id}> channel.")
+                    if cohort_channel and member:
+                        await cohort_channel.set_permissions(member, read_messages=True, send_messages=True)
+                        print(f"Added {member.name} to cohort channel in {guild.name}")
+                        
+                        # Phase 4: Send the Welcome Message (Only once per user)
+                        embed = discord.Embed(
+                            title=f"🎉 Welcome to {bot.active_course[target_guild_id]['name']}!",
+                            description=f"Hello {member.mention}! This is the private cohort channel.",
+                            color=discord.Color.gold()
+                        )
+                        
+                        schedule_text = (
+                            f"• **New Material**: Dropped every {TOPIC_CYCLE_MINUTES} minutes in this channel.\n"
+                            "• **Weekly Quiz**: A 5-question quiz will be posted near the end of the week.\n"
+                            "• **Practice**: You can DM me `!quiz` at any time to get a practice question based on the current week's material!\n"
+                            "• **Questions**: Use `!ask <your question>` in this channel or via DM to get AI-powered answers based on the material."
+                        )
+                        embed.add_field(name="Course Schedule & Features", value=schedule_text, inline=False)
+                        embed.add_field(name="Introduce Yourself", value="Please tell us a bit about yourself and why you're taking this course!", inline=False)
+                        
+                        await cohort_channel.send(embed=embed)
+                        await message.channel.send(f"✅ You're all set! Check out the <#{cohort_channel.id}> channel in **{guild.name}**.")
+                    else:
+                        await message.channel.send("There was an error finding the channel or your user account. Please contact an admin.")
                 else:
-                    await message.channel.send("There was an error finding the channel or your user account. Please contact an admin.")
+                    await message.channel.send("Could not find the server. Please contact an admin.")
             else:
                 await message.channel.send("That doesn't look like a valid email address. Please reply with your Google email address.")
                 return 
                 
-        elif "i agree" in message.content.lower() and bot.active_course and bot.enrollment_end_time:
+        elif "i agree" in message.content.lower():
+            target_guild_id = None
+            for guild in bot.guilds:
+                if guild.id in bot.active_course and guild.id in bot.enrollment_end_time:
+                    target_guild_id = guild.id
+                    break
+                    
+            if not target_guild_id:
+                return
+                
             now = datetime.datetime.now(datetime.timezone.utc)
-            if now > bot.enrollment_end_time: # Double-check for late responders to the agreement phase
+            if now > bot.enrollment_end_time[target_guild_id]: # Double-check for late responders to the agreement phase
                 await message.channel.send("Hey, too late. Next time!")
                 return
             

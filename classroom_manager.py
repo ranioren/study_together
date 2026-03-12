@@ -1,11 +1,13 @@
 import os
 import os.path
+import json
+import database
 
 # Relax token scope matching to avoid oauthlib errors when Google returns slightly different but functionally equivalent scopes
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
@@ -22,61 +24,48 @@ SCOPES = [
 ]
 
 class ClassroomManager:
-    def __init__(self, credentials_path="credentials.json", token_path="token.json"):
+    def __init__(self, credentials_path="credentials.json"):
         self.credentials_path = credentials_path
-        self.token_path = token_path
-        self.creds = None
-        self.service = None
-        self.drive_service = None
 
-    def authenticate(self):
-        """Authenticates the user and creates the service."""
+    def get_services(self, guild_id):
+        """Authenticates and returns the Classroom and Drive services for a specific guild."""
         from google.auth.exceptions import RefreshError
         
-        if os.path.exists(self.token_path):
-            self.creds = Credentials.from_authorized_user_file(self.token_path, SCOPES)
+        creds_data = database.get_google_creds(guild_id)
+        if not creds_data:
+            print(f"No Google credentials found for guild {guild_id}.")
+            return None, None
+            
+        creds = Credentials.from_authorized_user_info(creds_data, SCOPES)
         
-        # If there are no (valid) credentials available, let the user log in.
-        if not self.creds or not self.creds.valid:
-            if self.creds and self.creds.expired and self.creds.refresh_token:
+        if not creds.valid:
+            if creds.expired and creds.refresh_token:
                 try:
-                    self.creds.refresh(Request())
+                    creds.refresh(Request())
+                    # Save the refreshed credentials back to the database
+                    database.save_google_creds(guild_id, json.loads(creds.to_json()))
                 except RefreshError:
-                    print("Token expired or revoked. Deleting and re-authenticating...")
-                    os.remove(self.token_path)
-                    self.creds = None
-            
-            if not self.creds:
-                if not os.path.exists(self.credentials_path):
-                    raise FileNotFoundError(f"'{self.credentials_path}' not found. Please follow README.md to create it.")
-                
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    self.credentials_path, SCOPES
-                )
-                # Force user consent to ensure we get the correct scopes
-                self.creds = flow.run_local_server(port=0, prompt='consent')
-            
-                # Save the credentials for the next run
-                with open(self.token_path, "w") as token:
-                    token.write(self.creds.to_json())
+                    print(f"Token expired or revoked for guild {guild_id}. Need re-authentication.")
+                    return None, None
+            else:
+                return None, None
 
         try:
-            self.service = build("classroom", "v1", credentials=self.creds)
-            self.drive_service = build("drive", "v3", credentials=self.creds)
-            print("Authentication successful.")
+            service = build("classroom", "v1", credentials=creds)
+            drive_service = build("drive", "v3", credentials=creds)
+            return service, drive_service
         except HttpError as error:
-            print(f"An error occurred during authentication: {error}")
-            self.service = None
-            self.drive_service = None
+            print(f"An error occurred creating services for guild {guild_id}: {error}")
+            return None, None
 
-    def list_courses(self):
+    def list_courses(self, guild_id):
         """Lists the user's courses."""
-        if not self.service:
-            print("Service not authenticated. Call authenticate() first.")
+        service, _ = self.get_services(guild_id)
+        if not service:
             return []
 
         try:
-            results = self.service.courses().list(pageSize=10).execute()
+            results = service.courses().list(pageSize=10).execute()
             courses = results.get("courses", [])
 
             if not courses:
@@ -88,14 +77,14 @@ class ClassroomManager:
             print(f"An error occurred: {error}")
             return []
 
-    def get_course_work(self, course_id):
+    def get_course_work(self, guild_id, course_id):
         """Gets course work for a specific course."""
-        if not self.service:
-            print("Service not authenticated. Call authenticate() first.")
+        service, _ = self.get_services(guild_id)
+        if not service:
             return []
         
         try:
-            results = self.service.courses().courseWork().list(
+            results = service.courses().courseWork().list(
                 courseId=course_id,
                 courseWorkStates=["PUBLISHED", "DRAFT", "DELETED"]
             ).execute()
@@ -105,24 +94,24 @@ class ClassroomManager:
              print(f"An error occurred retrieving course work: {error}")
              return []
 
-    def get_course_work_materials(self, course_id):
+    def get_course_work_materials(self, guild_id, course_id):
         """Gets course work materials for a specific course."""
-        if not self.service:
-            print("Service not authenticated. Call authenticate() first.")
+        service, _ = self.get_services(guild_id)
+        if not service:
             return []
         
         try:
-            results = self.service.courses().courseWorkMaterials().list(courseId=course_id).execute()
+            results = service.courses().courseWorkMaterials().list(courseId=course_id).execute()
             materials = results.get("courseWorkMaterial", [])
             return materials
         except HttpError as error:
              print(f"An error occurred retrieving course materials: {error}")
              return []
 
-    def get_student_submissions(self, course_id, coursework_id="-", states=None):
+    def get_student_submissions(self, guild_id, course_id, coursework_id="-", states=None):
         """Gets student submissions for a specific course and coursework."""
-        if not self.service:
-            print("Service not authenticated. Call authenticate() first.")
+        service, _ = self.get_services(guild_id)
+        if not service:
             return []
         
         try:
@@ -133,21 +122,21 @@ class ClassroomManager:
             if states:
                 kwargs["states"] = states
                 
-            results = self.service.courses().courseWork().studentSubmissions().list(**kwargs).execute()
+            results = service.courses().courseWork().studentSubmissions().list(**kwargs).execute()
             submissions = results.get("studentSubmissions", [])
             return submissions
         except HttpError as error:
              print(f"An error occurred retrieving student submissions: {error}")
              return []
 
-    def get_course_students(self, course_id):
+    def get_course_students(self, guild_id, course_id):
         """Gets all students enrolled in a specific course."""
-        if not self.service:
-            print("Service not authenticated. Call authenticate() first.")
+        service, _ = self.get_services(guild_id)
+        if not service:
             return []
             
         try:
-            results = self.service.courses().students().list(courseId=course_id).execute()
+            results = service.courses().students().list(courseId=course_id).execute()
             students = results.get("students", [])
             return students
         except HttpError as error:
@@ -156,10 +145,10 @@ class ClassroomManager:
                  print("Check if the correct scopes are enabled and token.json is updated.")
              return []
 
-    def invite_student(self, course_id, email):
+    def invite_student(self, guild_id, course_id, email):
         """Invites a student to the course via email."""
-        if not self.service:
-            print("Service not authenticated. Call authenticate() first.")
+        service, _ = self.get_services(guild_id)
+        if not service:
             return None
 
         try:
@@ -168,17 +157,17 @@ class ClassroomManager:
                 'courseId': course_id,
                 'role': 'STUDENT'
             }
-            invitation = self.service.invitations().create(body=invitation).execute()
+            invitation = service.invitations().create(body=invitation).execute()
             print(f"Invitation sent to {email}")
             return invitation
         except HttpError as error:
             print(f"An error occurred sending invitation: {error}")
             return None
 
-    def get_drive_file_text(self, file_id):
+    def get_drive_file_text(self, guild_id, file_id):
         """Downloads a Google Doc from Drive as plain text."""
-        if not self.drive_service:
-            print("Drive service not authenticated.")
+        _, drive_service = self.get_services(guild_id)
+        if not drive_service:
             return ""
         
         try:
@@ -186,7 +175,7 @@ class ClassroomManager:
             from googleapiclient.http import MediaIoBaseDownload
             
             # Export Google Docs to text. If it's a PDF this will fail and we'll catch it.
-            request = self.drive_service.files().export_media(fileId=file_id, mimeType='text/plain')
+            request = drive_service.files().export_media(fileId=file_id, mimeType='text/plain')
             fh = io.BytesIO()
             downloader = MediaIoBaseDownload(fh, request)
             done = False
@@ -198,13 +187,48 @@ class ClassroomManager:
             print(f"Error fetching or exporting Drive file {file_id}. Note: We currently only support text export for Google Docs. {error}")
             return ""
 
-if __name__ == "__main__":
-    # Test execution
-    manager = ClassroomManager()
-    try:
-        manager.authenticate()
-        courses = manager.list_courses()
-        for course in courses:
-            print(f"Course: {course['name']} (ID: {course['id']})")
-    except Exception as e:
-        print(f"Error: {e}")
+    def get_auth_url(self, guild_id):
+        """Generate the OAuth2 consent URL for a guild owner to link their account."""
+        if not os.path.exists(self.credentials_path):
+            raise FileNotFoundError(f"'{self.credentials_path}' not found.")
+            
+        base_url = os.environ.get('BASE_URL', 'http://localhost:8080')
+        redirect_uri = f"{base_url}/oauth2callback"
+        
+        flow = Flow.from_client_secrets_file(
+            self.credentials_path,
+            scopes=SCOPES,
+            redirect_uri=redirect_uri
+        )
+        
+        # We pass guild_id as state so we know who authorized us when they return
+        auth_url, _ = flow.authorization_url(
+            access_type='offline',
+            include_granted_scopes='true',
+            prompt='consent',
+            state=str(guild_id)
+        )
+        return auth_url
+        
+    def exchange_code(self, guild_id, code):
+        """Exchange the auth code for tokens and save to DB."""
+        if not os.path.exists(self.credentials_path):
+            return False
+            
+        base_url = os.environ.get('BASE_URL', 'http://localhost:8080')
+        redirect_uri = f"{base_url}/oauth2callback"
+        
+        flow = Flow.from_client_secrets_file(
+            self.credentials_path,
+            scopes=SCOPES,
+            redirect_uri=redirect_uri
+        )
+        
+        try:
+            flow.fetch_token(code=code)
+            creds = flow.credentials
+            database.save_google_creds(guild_id, json.loads(creds.to_json()))
+            return True
+        except Exception as e:
+            print(f"Error exchanging OAuth code for guild {guild_id}: {e}")
+            return False

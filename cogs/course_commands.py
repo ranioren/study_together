@@ -3,6 +3,8 @@ from discord.ext import commands
 import datetime
 import os
 import io
+import asyncio
+import database
 from PIL import Image, ImageDraw, ImageFont
 from analytics_manager import log_analytics, check_streaks
 
@@ -81,9 +83,91 @@ class CourseCommands(commands.Cog):
         self.bot = bot
 
     @commands.command()
+    async def setup_admin(self, ctx):
+        """Creates a private channel for course administration and setup."""
+        if ctx.guild is None:
+            await ctx.send("This command must be run in a server.")
+            return
+            
+        if not ctx.author.guild_permissions.administrator and ctx.author.id != self.bot.owner_id:
+            await ctx.send("You need Administrator permissions to run this command.")
+            return
+
+        existing_channel = discord.utils.get(ctx.guild.text_channels, name="course-admin")
+        if existing_channel:
+            await ctx.send(f"An admin channel already exists: {existing_channel.mention}")
+            return
+
+        try:
+            overwrites = {
+                ctx.guild.default_role: discord.PermissionOverwrite(read_messages=False),
+                ctx.guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+                ctx.author: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            }
+            
+            admin_channel = await ctx.guild.create_text_channel(
+                name="course-admin",
+                overwrites=overwrites,
+                reason="Created private channel for course administration."
+            )
+            
+            embed = discord.Embed(
+                title="🔒 Course Administration",
+                description=(
+                    "Welcome to your private course administration channel.\n\n"
+                    "Since setup commands like `!start_course` display sensitive server information and course lists, "
+                    "it is highly recommended to run them here.\n\n"
+                    "**Next Steps:**\n"
+                    "1. Run `!auth_google` to link your Google Classroom account.\n"
+                    "2. Run `!start_course` to choose a course and prepare it for announcements."
+                ),
+                color=discord.Color.dark_theme()
+            )
+            await admin_channel.send(embed=embed)
+            await ctx.send(f"✅ Created private admin channel: {admin_channel.mention}")
+            
+        except discord.Forbidden:
+            await ctx.send("I don't have permission to create channels in this server.")
+        except Exception as e:
+            await ctx.send(f"An error occurred: {e}")
+
+    @commands.command()
+    async def auth_google(self, ctx):
+        """Send a DM to the server owner to authorize Google Classroom."""
+        if ctx.guild is None:
+            await ctx.send("This command must be run in a server.")
+            return
+            
+        if not ctx.author.guild_permissions.administrator and ctx.author.id != self.bot.owner_id:
+            await ctx.send("You need Administrator permissions to run this command.")
+            return
+            
+        try:
+            auth_url = self.bot.classroom_manager.get_auth_url(ctx.guild.id)
+            await ctx.author.send(
+                f"**Google Classroom Setup for {ctx.guild.name}**\n"
+                "To link your server to Google Classroom, please click the link below to authorize the bot:\n"
+                f"<{auth_url}>\n\n"
+                "Once authorized, you can run `!start_course` in your server's `#course-admin` channel to keep it private."
+            )
+            
+            warning = ""
+            if ctx.channel.name != "course-admin":
+                warning = " *(Tip: It's safer to run setup commands like `!start_course` in a private channel like `#course-admin`)*"
+                
+            await ctx.send(f"I've sent you a DM with instructions on how to authenticate Google Classroom.{warning}")
+        except FileNotFoundError:
+            await ctx.send("The bot administrator has not configured Google OAuth credentials yet.")
+        except discord.Forbidden:
+            await ctx.send("I couldn't send you a DM. Please check your privacy settings.")
+
+    @commands.command()
     async def start_course(self, ctx):
         """Admin command to list courses and select an active one."""
-        
+        if ctx.guild is None:
+            await ctx.send("With multi-tenant setup, `!start_course` must be run in your server, not a DM.")
+            return
+            
         is_authorized = False
         if ctx.author.id == self.bot.owner_id:
             is_authorized = True
@@ -94,12 +178,20 @@ class CourseCommands(commands.Cog):
             await ctx.send("You do not have permission to use this command.")
             return
 
-        courses = self.bot.classroom_manager.list_courses()
+        courses = self.bot.classroom_manager.list_courses(ctx.guild.id)
         if not courses:
-            await ctx.send("No courses found in Google Classroom.")
+            await ctx.send("No courses found or not authenticated. Run `!auth_google` first.")
             return
 
-        embed = discord.Embed(title="Available Courses", description="Reply with the number of the course you want to start.", color=discord.Color.blue())
+        warning = ""
+        if ctx.channel.name != "course-admin":
+             warning = "⚠️ **Warning: You are running this in a public channel.** Your course list is visible to all members here.\n\n"
+
+        embed = discord.Embed(
+            title="Available Courses", 
+            description=f"{warning}Reply with the number of the course you want to start.", 
+            color=discord.Color.blue()
+        )
         for idx, c in enumerate(courses):
             embed.add_field(name=f"{idx + 1}. {c['name']}", value=f"ID: {c['id']}", inline=False)
             
@@ -113,15 +205,19 @@ class CourseCommands(commands.Cog):
             selection_idx = int(msg.content) - 1
             if 0 <= selection_idx < len(courses):
                 selected_course = courses[selection_idx]
-                self.bot.active_course = selected_course
+                
+                # Active course is saved to the bot cache (db persistence happens during announce)
+                self.bot.active_course_cache[ctx.guild.id] = selected_course
+                scope_msg = "Course data successfully fetched. Use `!announce_course` in #general to begin enrollment!"
                 
                 course_id = selected_course['id']
+                guild_id = ctx.guild.id
                 try:
-                    students = self.bot.classroom_manager.get_course_students(course_id)
+                    students = self.bot.classroom_manager.get_course_students(guild_id, course_id)
                     total_students = len(students) if students else 0
-                    assignments = self.bot.classroom_manager.get_course_work(course_id)
+                    assignments = self.bot.classroom_manager.get_course_work(guild_id, course_id)
                     total_assignments = len(assignments) if assignments else 0
-                    materials = self.bot.classroom_manager.get_course_work_materials(course_id)
+                    materials = self.bot.classroom_manager.get_course_work_materials(guild_id, course_id)
                     total_weeks = len(materials) if materials else 0
                 except Exception as e:
                     total_students, total_assignments, total_weeks = 0, 0, 0
@@ -129,7 +225,7 @@ class CourseCommands(commands.Cog):
 
                 confirm_embed = discord.Embed(
                     title=f"✅ Course Selected: {selected_course['name']}",
-                    description="Course data successfully fetched. Use `!announce_course` in #general to begin enrollment!",
+                    description=scope_msg,
                     color=discord.Color.green()
                 )
                 
@@ -145,19 +241,44 @@ class CourseCommands(commands.Cog):
                 await ctx.send(embed=confirm_embed, file=file)
             else:
                 await ctx.send("Invalid selection number.")
+        except asyncio.TimeoutError:
+             await ctx.send("Timed out waiting for a response.")
         except ValueError:
              await ctx.send("Please enter a valid number.")
         except Exception as e:
-             await ctx.send("Timed out or an error occurred. Please try again.")
+             import traceback
+             traceback.print_exc()
+             await ctx.send(f"An error occurred: {e}")
 
     @commands.command()
     async def announce_course(self, ctx):
         """Fetch and announce the course, creating the channel immediately."""
-        if not self.bot.active_course:
-            await ctx.send("No active course selected! Use `!start_course` first to select a course.")
+        if ctx.guild is None:
+            await ctx.send("❌ This command must be run inside a server channel, not in a Direct Message.")
             return
             
-        course = self.bot.active_course
+        # Pull from memory staged courses first
+        staged = getattr(self.bot, 'staged_courses', {}).get(ctx.author.id)
+        
+        # Check if already active in DB
+        db_config = database.get_server_config(ctx.guild.id)
+        
+        if staged:
+            course = staged
+            database.set_server_active_course(ctx.guild.id, course['id'], course['name'], course.get('alternateLink', ''))
+            # Move to cache
+            self.bot.active_course_cache[ctx.guild.id] = course
+            # Clear stage
+            del self.bot.staged_courses[ctx.author.id]
+        elif db_config and db_config['active_course_id']:
+            course = self.bot.active_course_cache.get(ctx.guild.id)
+            if not course:
+                 # Fallback to recreate a partial course object from DB if cache missed
+                 course = {'id': db_config['active_course_id'], 'name': db_config['active_course_name'], 'alternateLink': db_config['active_course_link']}
+                 self.bot.active_course_cache[ctx.guild.id] = course
+        else:
+            await ctx.send("No active course selected for this server! Use `!start_course` first.")
+            return
 
         embed = discord.Embed(
             title=f"📚 Welcome to {course['name']}!",
@@ -173,8 +294,8 @@ class CourseCommands(commands.Cog):
         await ctx.send("*React with ✅ to join the course and receive instructions!*")
         
         now = datetime.datetime.now(datetime.timezone.utc)
-        self.bot.enrollment_end_time = now + datetime.timedelta(minutes=1, seconds=30) 
-        self.bot.pre_start_reminder_sent = False
+        enroll_end = now + datetime.timedelta(minutes=1, seconds=30)
+        database.update_enrollment_end_time(ctx.guild.id, enroll_end)
         
         raw_course_name = course['name']
         safe_course_name = raw_course_name.lower().replace(" ", "-")
@@ -192,8 +313,8 @@ class CourseCommands(commands.Cog):
                 overwrites=overwrites,
                 reason=f"Cohort channel created from announcement"
             )
-            self.bot.active_cohort_channel_id = cohort_channel.id
-            print(f"Created new cohort channel {channel_name}")
+            database.set_cohort_channel(ctx.guild.id, cohort_channel.id)
+            print(f"Created new cohort channel {channel_name} for Server {guild.name}")
             
             welcome_embed = discord.Embed(
                 title=f"🏫 Welcome to {course['name']}!",
@@ -234,20 +355,42 @@ class CourseCommands(commands.Cog):
             return
             
         is_owner = (ctx.author.id == self.bot.owner_id)
-            
-        if not self.bot.active_course or (not is_owner and ctx.author.id not in self.bot.pending_cohort_roster):
+        
+        # In DM context, find a guild where this user is enrolled
+        target_guild_id = None
+        for guild_id, roster in self.bot.pending_cohort_roster.items():
+            if ctx.author.id in roster:
+                target_guild_id = guild_id
+                break
+                
+        if not target_guild_id and is_owner:
+            # If owner, fallback to first active course
+            if self.bot.active_course:
+                target_guild_id = list(self.bot.active_course.keys())[0]
+
+        if not target_guild_id or (not self.bot.active_course.get(target_guild_id) and not database.get_server_config(target_guild_id)):
             await ctx.send("You must be fully enrolled in an active course to request practice quizzes.")
             return
             
-        course_id = self.bot.active_course['id']
+        course = self.bot.active_course.get(target_guild_id)
+        if not course:
+             db_config = database.get_server_config(target_guild_id)
+             if db_config:
+                 course = {'id': db_config['active_course_id'], 'name': db_config['active_course_name'], 'alternateLink': db_config['active_course_link']}
+                 self.bot.active_course_cache[target_guild_id] = course
+             else:
+                 return # Shouldn't happen based on above check
+                 
+        course_id = course['id']
         
         current_week_index = 0
-        if self.bot.active_cohort_channel_id and self.bot.active_cohort_channel_id in self.bot.course_progress:
-            current_week_index = max(0, self.bot.course_progress[self.bot.active_cohort_channel_id] - 1)
+        cohort_ch_id = self.bot.active_cohort_channel_id.get(target_guild_id)
+        if cohort_ch_id and cohort_ch_id in self.bot.course_progress:
+            current_week_index = max(0, self.bot.course_progress[cohort_ch_id] - 1)
             
         await ctx.send("🤖 *Thinking of a good question based on this week's material...*")
         
-        fallback_text = self.bot.get_full_material_text(course_id, current_week_index)
+        fallback_text = self.bot.get_full_material_text(target_guild_id, course_id, current_week_index)
              
         material_text = self.bot.quiz_manager.get_material(course_id, current_week_index, fallback_text=fallback_text)
         
@@ -301,34 +444,57 @@ class CourseCommands(commands.Cog):
     @commands.command()
     async def ask(self, ctx, *, question: str):
         """Phase 3 RAG: Ask a question about the current weekly material."""
-        if not self.bot.active_course:
-            await ctx.send("No active course is running right now to ask questions about.")
-            return
-            
-        course_id = self.bot.active_course['id']
-        current_week_index = 0
         is_owner = (ctx.author.id == self.bot.owner_id)
         
+        current_week_index = 0
+        target_guild_id = None
+        
         if isinstance(ctx.channel, discord.DMChannel):
-            if not is_owner and ctx.author.id not in self.bot.pending_cohort_roster:
-                await ctx.send("You must be fully enrolled in an active course to ask questions.")
+            # Try to resolve guild from roster
+            for guild_id, roster in self.bot.pending_cohort_roster.items():
+                if ctx.author.id in roster:
+                    target_guild_id = guild_id
+                    break
+                    
+            if not target_guild_id and is_owner:
+                if self.bot.active_course:
+                    target_guild_id = list(self.bot.active_course.keys())[0]
+                    
+            if not target_guild_id:
+                await ctx.send("You must be fully enrolled in an active course to ask questions via DM.")
                 return
-            if self.bot.active_cohort_channel_id and self.bot.active_cohort_channel_id in self.bot.course_progress:
-                current_week_index = max(0, self.bot.course_progress[self.bot.active_cohort_channel_id] - 1)
+            
+            cohort_ch_id = self.bot.active_cohort_channel_id.get(target_guild_id)
+            if cohort_ch_id and cohort_ch_id in self.bot.course_progress:
+                current_week_index = max(0, self.bot.course_progress[cohort_ch_id] - 1)
         else:
+            target_guild_id = ctx.guild.id
             if ctx.channel.id in self.bot.course_progress:
                 current_week_index = max(0, self.bot.course_progress[ctx.channel.id] - 1)
             else:
                  if is_owner:
-                     if self.bot.active_cohort_channel_id and self.bot.active_cohort_channel_id in self.bot.course_progress:
-                         current_week_index = max(0, self.bot.course_progress[self.bot.active_cohort_channel_id] - 1)
+                     cohort_ch_id = self.bot.active_cohort_channel_id.get(target_guild_id)
+                     if cohort_ch_id and cohort_ch_id in self.bot.course_progress:
+                         current_week_index = max(0, self.bot.course_progress[cohort_ch_id] - 1)
                  else:
                      await ctx.send("Please use `!ask` inside your cohort channel or in a Direct Message with me.")
                      return
+                     
+        if not target_guild_id or (not self.bot.active_course.get(target_guild_id) and not database.get_server_config(target_guild_id)):
+            await ctx.send("No active course is running right now to ask questions about.")
+            return
+            
+        course = self.bot.active_course.get(target_guild_id)
+        if not course:
+             db_config = database.get_server_config(target_guild_id)
+             course = {'id': db_config['active_course_id'], 'name': db_config['active_course_name'], 'alternateLink': db_config['active_course_link']}
+             self.bot.active_course_cache[target_guild_id] = course
+             
+        course_id = course['id']
                  
         thinking_msg = await ctx.send("🤔 *Reading the material to find your answer...*")
         
-        fallback_text = self.bot.get_full_material_text(course_id, current_week_index)
+        fallback_text = self.bot.get_full_material_text(target_guild_id, course_id, current_week_index)
              
         material_text = self.bot.quiz_manager.get_material(course_id, current_week_index, fallback_text=fallback_text)
         
@@ -353,6 +519,10 @@ class CourseCommands(commands.Cog):
     @commands.command()
     async def report(self, ctx):
         """Admin command to get an on-demand course status report."""
+        if ctx.guild is None:
+            await ctx.send("❌ This command must be run inside a server channel, not in a Direct Message.")
+            return
+            
         is_authorized = False
         if ctx.author.id == self.bot.owner_id:
             is_authorized = True
@@ -363,44 +533,51 @@ class CourseCommands(commands.Cog):
             await ctx.send("You do not have permission to use this command.")
             return
 
-        if not self.bot.active_course:
-            await ctx.send("No active course selected! Use `!start_course` first.")
+        guild_id = ctx.guild.id
+        db_config = database.get_server_config(guild_id)
+        if not db_config or not db_config['active_course_id']:
+            await ctx.send("No active course selected for this server! Use `!start_course` first.")
             return
 
-        course_id = self.bot.active_course['id']
+        course_id = db_config['active_course_id']
+        course_name = db_config['active_course_name']
         
         msg = await ctx.send("📊 *Generating status report...*")
         
         try:
-            students = self.bot.classroom_manager.get_course_students(course_id)
+            students = self.bot.classroom_manager.get_course_students(guild_id, course_id)
             total_students = len(students) if students else 0
-            assignments = self.bot.classroom_manager.get_course_work(course_id)
+            assignments = self.bot.classroom_manager.get_course_work(guild_id, course_id)
             
             embed = discord.Embed(
-                title=f"📊 Course Report: {self.bot.active_course['name']}",
+                title=f"📊 Course Report: {course_name}",
                 description=f"Current status of the course enrollment and participation.",
                 color=discord.Color.blue(),
                 timestamp=datetime.datetime.now(datetime.timezone.utc)
             )
             
-            embed.add_field(name="Total Enrolled Students", value=str(total_students), inline=True)
-            embed.add_field(name="Onboarded via Discord", value=str(len(self.bot.pending_cohort_roster)), inline=True)
+            roster = self.bot.pending_cohort_roster.get(guild_id, set())
             
-            if self.bot.active_cohort_channel_id and self.bot.active_cohort_channel_id in self.bot.course_progress:
-                current_week = self.bot.course_progress[self.bot.active_cohort_channel_id]
+            embed.add_field(name="Total Enrolled Students", value=str(total_students), inline=True)
+            embed.add_field(name="Onboarded via Discord", value=str(len(roster)), inline=True)
+            
+            cohort_ch_id = self.bot.active_cohort_channel_id.get(guild_id)
+            
+            if cohort_ch_id and cohort_ch_id in self.bot.course_progress:
+                current_week = self.bot.course_progress[cohort_ch_id]
                 embed.add_field(name="Current Week", value=f"Week {current_week}", inline=True)
             
             if assignments:
                 assignment_info = ""
                 for assign in assignments[:3]:
-                    submissions = self.bot.classroom_manager.get_student_submissions(course_id, coursework_id=assign['id'], states=["TURNED_IN", "RETURNED"])
+                    submissions = self.bot.classroom_manager.get_student_submissions(guild_id, course_id, coursework_id=assign['id'], states=["TURNED_IN", "RETURNED"])
                     count = len(submissions) if submissions else 0
                     assignment_info += f"• **{assign['title']}**: {count}/{total_students} turned in\n"
                 
                 embed.add_field(name="Recent Assignments", value=assignment_info or "No assignments found.", inline=False)
 
-            if (self.bot.active_cohort_channel_id, current_week - 1) in self.bot.weekly_scores:
-                quiz_results = self.bot.weekly_scores[(self.bot.active_cohort_channel_id, current_week - 1)]
+            if cohort_ch_id and (cohort_ch_id, current_week - 1) in self.bot.weekly_scores:
+                quiz_results = self.bot.weekly_scores[(cohort_ch_id, current_week - 1)]
                 if quiz_results:
                     sorted_scores = sorted(quiz_results.items(), key=lambda x: x[1], reverse=True)
                     quiz_info = "\n".join([f"• <@{uid}>: {score} points" for uid, score in sorted_scores[:5]])

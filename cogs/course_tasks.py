@@ -1,6 +1,7 @@
 import discord
 import datetime
 from discord.ext import commands, tasks
+import database
 from analytics_manager import log_analytics, check_streaks, save_quiz_scores
 
 TOPIC_CYCLE_MINUTES = 8
@@ -141,23 +142,30 @@ class CourseTasks(commands.Cog):
     async def weekly_course_update(self):
         print("Running weekly course update...")
         
-        if not self.bot.active_course:
-            return
-            
-        course_id = self.bot.active_course['id']
-            
-        raw_course_name = self.bot.active_course['name']
-        safe_course_name = raw_course_name.lower().replace(" ", "-")
-        channel_prefix = f"{safe_course_name}-"
-        
-        assignments = self.bot.classroom_manager.get_course_work(course_id)
-        materials = self.bot.classroom_manager.get_course_work_materials(course_id)
-        students = self.bot.classroom_manager.get_course_students(course_id)
-        
-        total_students = len(students) if students else 0
-        total_weeks = len(materials) if materials else 0
-
         for guild in self.bot.guilds:
+            course = self.bot.active_course_cache.get(guild.id)
+            if not course:
+                db_config = database.get_server_config(guild.id)
+                if db_config and db_config['active_course_id']:
+                    course = {'id': db_config['active_course_id'], 'name': db_config['active_course_name'], 'alternateLink': db_config['active_course_link']}
+                    self.bot.active_course_cache[guild.id] = course
+            
+            if not course:
+                continue
+                
+            course_id = course['id']
+                
+            raw_course_name = course['name']
+            safe_course_name = raw_course_name.lower().replace(" ", "-")
+            channel_prefix = f"{safe_course_name}-"
+            
+            assignments = self.bot.classroom_manager.get_course_work(guild.id, course_id)
+            materials = self.bot.classroom_manager.get_course_work_materials(guild.id, course_id)
+            students = self.bot.classroom_manager.get_course_students(guild.id, course_id)
+            
+            total_students = len(students) if students else 0
+            total_weeks = len(materials) if materials else 0
+
             for channel in guild.text_channels:
                 if channel.name.startswith(channel_prefix):
                     if channel.id not in self.bot.course_progress:
@@ -166,7 +174,8 @@ class CourseTasks(commands.Cog):
                     current_week_index = self.bot.course_progress[channel.id]
                     
                     now = datetime.datetime.now(datetime.timezone.utc)
-                    if self.bot.enrollment_end_time and now < self.bot.enrollment_end_time:
+                    enroll_end = self.bot.enrollment_end_time.get(guild.id)
+                    if enroll_end and now < enroll_end:
                         print(f"Skipping week update for {channel.name} - enrollment still open.")
                         continue
 
@@ -175,7 +184,7 @@ class CourseTasks(commands.Cog):
                             try:
                                 embed = discord.Embed(
                                     title="🎓 Course Finished!",
-                                    description=f"Congratulations! We have reached the end of the **{self.bot.active_course['name']}** course material.\n\nNo more weekly information will be shared here, but you can always use `!ask` to ask questions about the material!",
+                                    description=f"Congratulations! We have reached the end of the **{course['name']}** course material.\n\nNo more weekly information will be shared here, but you can always use `!ask` to ask questions about the material!",
                                     color=discord.Color.gold()
                                 )
                                 embed.add_field(name="Thank You", value="Thanks for taking part in the course! 🎉", inline=False)
@@ -189,7 +198,7 @@ class CourseTasks(commands.Cog):
                     try:
                         embed = discord.Embed(
                             title=f"📅 Course Material - Week {current_week_index + 1}!",
-                            description=f"Welcome to a new week of {self.bot.active_course['name']}! Here is your material for this week:",
+                            description=f"Welcome to a new week of {course['name']}! Here is your material for this week:",
                             color=discord.Color.purple()
                         )
                         
@@ -204,7 +213,7 @@ class CourseTasks(commands.Cog):
                             
                             if current_week_index > 0:
                                 prev_assignment = assignments[(current_week_index - 1) % len(assignments)]
-                                submissions = self.bot.classroom_manager.get_student_submissions(course_id, coursework_id=prev_assignment['id'], states=["TURNED_IN"])
+                                submissions = self.bot.classroom_manager.get_student_submissions(guild.id, course_id, coursework_id=prev_assignment['id'], states=["TURNED_IN"])
                                 completed_count = len(submissions) if submissions else 0
                                 completion_text = f"{completed_count} out of {total_students} students have submitted."
                                 embed.add_field(name="📊 Last Week's Completion Progress", value=completion_text, inline=False)
@@ -231,7 +240,7 @@ class CourseTasks(commands.Cog):
 
     @tasks.loop(seconds=30)
     async def manager_report_loop(self):
-        if not self.bot.active_course or not hasattr(self.bot, 'owner_id') or not self.bot.owner_id:
+        if not hasattr(self.bot, 'owner_id') or not self.bot.owner_id:
             return
             
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -244,57 +253,81 @@ class CourseTasks(commands.Cog):
         target_duration_90 = datetime.timedelta(seconds=cycle_seconds * 0.90)
         target_duration_winner = datetime.timedelta(seconds=cycle_seconds - 30)
         
-        course_id = self.bot.active_course['id']
-        students = self.bot.classroom_manager.get_course_students(course_id)
-        total_students = len(students) if students else 0
-        assignments = self.bot.classroom_manager.get_course_work(course_id)
-        
         for guild in self.bot.guilds:
-            for channel in guild.text_channels:
-                if channel.id in self.bot.topic_start_time and channel.id in self.bot.course_progress:
-                    start_time = self.bot.topic_start_time[channel.id]
-                    week_index = self.bot.course_progress[channel.id] - 1
+            course = self.bot.active_course_cache.get(guild.id)
+            if not course:
+                db_config = database.get_server_config(guild.id)
+                if db_config and db_config['active_course_id']:
+                    course = {'id': db_config['active_course_id'], 'name': db_config['active_course_name'], 'alternateLink': db_config['active_course_link']}
+                    self.bot.active_course_cache[guild.id] = course
+            
+            if not course:
+                continue
+                
+            course_id = course['id']
+            students = self.bot.classroom_manager.get_course_students(course_id)
+            total_students = len(students) if students else 0
+            assignments = self.bot.classroom_manager.get_course_work(course_id)
+            
+            db_config = database.get_server_config(guild.id)
+            if not db_config:
+                continue
+                
+            timing_data = database.get_topic_timing(guild.id)
+            if not timing_data or not timing_data['start_time']:
+                continue
+                
+            start_time = datetime.datetime.fromisoformat(timing_data['start_time'])
+            week_index = db_config['current_week_index']
+            cohort_ch_id = db_config['cohort_channel_id']
+            
+            if not cohort_ch_id:
+                continue
+                
+            channel = guild.get_channel(cohort_ch_id)
+            if not channel:
+                continue
+                
+            if week_index >= 0:
+                elapsed = now - start_time
+                
+                if week_index == 0 and elapsed >= target_duration_15 and not timing_data['reported_15']:
+                    database.mark_timing_event(guild.id, 'reported_15')
+                    await self.send_promotion_reminder(guild.id, course_id)
+                
+                if elapsed >= target_duration_20 and not timing_data['reported_20']:
+                    database.mark_timing_event(guild.id, 'reported_20')
+                    await self.send_engagement_reminder(guild.id, channel, week_index, start_time)
+
+                if elapsed >= target_duration_70 and not timing_data['reported_70']:
+                    database.mark_timing_event(guild.id, 'reported_70')
+                    await self.send_manager_report(guild.id, course_id, assignments, week_index, total_students, guild, channel, "70% (3.5 min)")
                     
-                    if week_index >= 0:
-                        elapsed = now - start_time
-                        
-                        if week_index == 0 and elapsed >= target_duration_15 and (channel.id, week_index) not in self.bot.reported_topics_15:
-                            self.bot.reported_topics_15.add((channel.id, week_index))
-                            await self.send_promotion_reminder(course_id)
-                        
-                        if elapsed >= target_duration_20 and (channel.id, week_index) not in self.bot.reported_topics_20:
-                            self.bot.reported_topics_20.add((channel.id, week_index))
-                            await self.send_engagement_reminder(channel, week_index, start_time)
+                if elapsed >= target_duration_75 and not timing_data['reported_75']:
+                    database.mark_timing_event(guild.id, 'reported_75')
+                    await self.request_next_week_materials(guild.id, course_id, week_index)
+                    
+                if elapsed >= target_duration_80 and not timing_data['reported_80']:
+                    database.mark_timing_event(guild.id, 'reported_80')
+                    await self.post_weekly_quiz(course_id, channel, week_index)
+                    
+                if elapsed >= target_duration_90 and not timing_data['reported_90']:
+                    database.mark_timing_event(guild.id, 'reported_90')
+                    await self.send_manager_report(guild.id, course_id, assignments, week_index, total_students, guild, channel, "90% (4.5 min)")
 
-                        if elapsed >= target_duration_70 and (channel.id, week_index) not in self.bot.reported_topics_70:
-                            self.bot.reported_topics_70.add((channel.id, week_index))
-                            await self.send_manager_report(course_id, assignments, week_index, total_students, guild, channel, "70% (3.5 min)")
-                            
-                        if elapsed >= target_duration_75 and (channel.id, week_index) not in self.bot.reported_topics_75:
-                            self.bot.reported_topics_75.add((channel.id, week_index))
-                            await self.request_next_week_materials(course_id, week_index)
-                            
-                        if elapsed >= target_duration_80 and (channel.id, week_index) not in self.bot.reported_topics_80:
-                            self.bot.reported_topics_80.add((channel.id, week_index))
-                            await self.post_weekly_quiz(course_id, channel, week_index)
-                            
-                        if elapsed >= target_duration_90 and (channel.id, week_index) not in self.bot.reported_topics_90:
-                            self.bot.reported_topics_90.add((channel.id, week_index))
-                            await self.send_manager_report(course_id, assignments, week_index, total_students, guild, channel, "90% (4.5 min)")
+                if elapsed >= target_duration_90 and not timing_data['reported_90_reminder']:
+                    database.mark_timing_event(guild.id, 'reported_90_reminder')
+                    await self.send_quiz_reminder(guild.id, channel, week_index)
 
-                        if elapsed >= target_duration_90 and (channel.id, week_index) not in self.bot.reported_topics_90_reminder:
-                            self.bot.reported_topics_90_reminder.add((channel.id, week_index))
-                            await self.send_quiz_reminder(channel, week_index)
-
-                        if elapsed >= target_duration_90 and (channel.id, week_index) not in self.bot.reported_quiz_winners:
-                            self.bot.reported_quiz_winners.add((channel.id, week_index))
-                            await self.announce_quiz_winner(channel, week_index)
+                if elapsed >= target_duration_winner and not timing_data['reported_winner']:
+                    database.mark_timing_event(guild.id, 'reported_winner')
+                    await self.announce_quiz_winner(channel, week_index)
 
     @manager_report_loop.before_loop
     async def before_manager_report_loop(self):
         await self.bot.wait_until_ready()
 
-    async def send_engagement_reminder(self, channel, week_index, start_time):
+    async def send_engagement_reminder(self, guild_id, channel, week_index, start_time):
         import csv
         import os
         
@@ -333,7 +366,7 @@ class CourseTasks(commands.Cog):
                 try:
                     embed = discord.Embed(
                         title="👋 Just checking in!",
-                        description=f"Hi {member.mention}, I noticed you haven't asked any questions or requested a practice quiz for this week's topic in **{self.bot.active_course['name']}**.\n\n"
+                        description=f"Hi {member.mention}, I noticed you haven't asked any questions or requested a practice quiz for this week's topic in **{self.bot.active_course[guild_id]['name']}**.\n\n"
                                     f"Take advantage of my capabilities! You can ask me questions using `!ask <question>` or request a quick quiz using `!quiz`. I'm here to help you learn! 📚",
                         color=discord.Color.blue()
                     )
@@ -342,7 +375,7 @@ class CourseTasks(commands.Cog):
                 except discord.Forbidden:
                     pass
 
-    async def send_quiz_reminder(self, channel, week_index):
+    async def send_quiz_reminder(self, guild_id, channel, week_index):
         scores = self.bot.weekly_scores.get((channel.id, week_index), {})
         responded_users = set(scores.keys())
         
@@ -353,7 +386,7 @@ class CourseTasks(commands.Cog):
                 try:
                     embed = discord.Embed(
                         title="⏰ Weekly Quiz Reminder!",
-                        description=f"Hi {member.mention}, the weekly quiz for **{self.bot.active_course['name']}** is closing soon, and I noticed you haven't answered it yet!\n\n"
+                        description=f"Hi {member.mention}, the weekly quiz for **{self.bot.active_course[guild_id]['name']}** is closing soon, and I noticed you haven't answered it yet!\n\n"
                                     f"Please head back to the <#{channel.id}> channel and submit your answers before time runs out. Good luck! 🍀",
                         color=discord.Color.gold()
                     )
@@ -362,12 +395,15 @@ class CourseTasks(commands.Cog):
                 except discord.Forbidden:
                     pass
 
-    async def send_promotion_reminder(self, course_id):
+    async def send_promotion_reminder(self, guild_id, course_id):
         try:
             owner = await self.bot.fetch_user(self.bot.owner_id)
             if owner:
-                course_name = self.bot.active_course['name']
-                course_link = self.bot.active_course.get('alternateLink', 'No link available')
+                course = self.bot.active_course.get(guild_id)
+                if not course:
+                    return
+                course_name = course['name']
+                course_link = course.get('alternateLink', 'No link available')
                 
                 embed = discord.Embed(
                     title="📢 Reminder: Promote Your Course!",
@@ -389,12 +425,12 @@ class CourseTasks(commands.Cog):
         except discord.Forbidden:
             pass
 
-    async def send_manager_report(self, course_id, assignments, week_index, total_students, guild, channel, interval_name):
+    async def send_manager_report(self, guild_id, course_id, assignments, week_index, total_students, guild, channel, interval_name):
         if assignments:
             assignment = assignments[week_index % len(assignments)]
             submissions = self.bot.classroom_manager.get_student_submissions(course_id, coursework_id=assignment['id'], states=["TURNED_IN", "RETURNED"])
             
-            report_lines = [f"**Report for {self.bot.active_course['name']} (Week {week_index + 1}) - {interval_name} mark**"]
+            report_lines = [f"**Report for {self.bot.active_course[guild_id]['name']} (Week {week_index + 1}) - {interval_name} mark**"]
             report_lines.append(f"Assignment: {assignment['title']}")
             report_lines.append(f"Completion: {len(submissions)} out of {total_students} submitted/graded.")
             
@@ -419,7 +455,7 @@ class CourseTasks(commands.Cog):
             except discord.Forbidden:
                 pass
 
-    async def request_next_week_materials(self, course_id, current_week_index):
+    async def request_next_week_materials(self, guild_id, course_id, current_week_index):
         next_week = current_week_index + 1
         materials = self.bot.classroom_manager.get_course_work_materials(course_id)
         
@@ -427,12 +463,12 @@ class CourseTasks(commands.Cog):
             return
             
         next_material = materials[next_week]
-        course_name = self.bot.active_course['name']
+        course_name = self.bot.active_course[guild_id]['name']
         
         try:
             owner = await self.bot.fetch_user(self.bot.owner_id)
             if owner:
-                self.bot.pending_owner_material = (course_id, next_week)
+                self.bot.pending_owner_material[owner.id] = (course_id, next_week)
                 
                 embed = discord.Embed(
                     title="📅 Course Content Advisory",
@@ -591,82 +627,85 @@ class CourseTasks(commands.Cog):
     async def poll_student_submissions(self):
         print("Polling for new student submissions...")
         
-        if not self.bot.active_course:
-            return
+        for guild in self.bot.guilds:
+            course = self.bot.active_course_cache.get(guild.id)
+            if not course:
+                db_config = database.get_server_config(guild.id)
+                if db_config and db_config['active_course_id']:
+                    course = {'id': db_config['active_course_id'], 'name': db_config['active_course_name'], 'alternateLink': db_config['active_course_link']}
+                    self.bot.active_course_cache[guild.id] = course
             
-        course_id = self.bot.active_course['id']
-            
-        assignments = self.bot.classroom_manager.get_course_work(course_id)
-        assignment_map = {aw['id']: aw for aw in assignments} if assignments else {}
-        
-        students = self.bot.classroom_manager.get_course_students(course_id)
-        student_map = {}
-        if students:
-            for s in students:
-                profile = s.get('profile', {})
-                email = profile.get('emailAddress', '')
-                student_map[s.get('userId')] = email
-            
-        submissions = self.bot.classroom_manager.get_student_submissions(course_id, coursework_id="-", states=["TURNED_IN"])
-        
-        if not submissions:
-            return
-            
-        for sub in submissions:
-            try:
-                cw_id = sub.get('courseWorkId')
-                assignment = assignment_map.get(cw_id, {})
-                title = assignment.get('title', 'Unknown Assignment')
-                work_type = assignment.get('workType', 'ASSIGNMENT')
+            if not course:
+                continue
                 
-                classroom_user_id = sub.get('userId')
-                classroom_email = student_map.get(classroom_user_id)
+            course_id = course['id']
                 
-                if not classroom_email:
-                    continue 
+            assignments = self.bot.classroom_manager.get_course_work(guild.id, course_id)
+            assignment_map = {aw['id']: aw for aw in assignments} if assignments else {}
+            
+            students = self.bot.classroom_manager.get_course_students(guild.id, course_id)
+            student_map = {}
+            if students:
+                for s in students:
+                    profile = s.get('profile', {})
+                    email = profile.get('emailAddress', '')
+                    student_map[s.get('userId')] = email
                 
-                matched_discord_id = None
-                for d_id, d_email in self.bot.user_emails.items():
-                    if d_email.lower() == classroom_email.lower():
-                        matched_discord_id = d_id
-                        break
+            submissions = self.bot.classroom_manager.get_student_submissions(guild.id, course_id, coursework_id="-", states=["TURNED_IN"])
+            
+            if not submissions:
+                continue
+                
+            for sub in submissions:
+                try:
+                    cw_id = sub.get('courseWorkId')
+                    assignment = assignment_map.get(cw_id, {})
+                    title = assignment.get('title', 'Unknown Assignment')
+                    work_type = assignment.get('workType', 'ASSIGNMENT')
+                    
+                    classroom_user_id = sub.get('userId')
+                    classroom_email = student_map.get(classroom_user_id)
+                    
+                    if not classroom_email:
+                        continue 
+                    
+                    matched_discord_id = None
+                    for d_id, d_email in self.bot.user_emails.items():
+                        if d_email.lower() == classroom_email.lower():
+                            matched_discord_id = d_id
+                            break
+                            
+                    if not matched_discord_id:
+                        continue 
                         
-                if not matched_discord_id:
-                    continue 
+                    target_user = guild.get_member(matched_discord_id)
                     
-                target_user = None
-                for guild in self.bot.guilds:
-                    member = guild.get_member(matched_discord_id)
-                    if member:
-                        target_user = member
-                        break
-                
-                if not target_user:
-                    continue 
-                
-                embed_title = "📝 Student Submission Received"
-                embed_desc = "We've received your completed work!"
-                
-                if work_type == 'SHORT_ANSWER_QUESTION' or work_type == 'MULTIPLE_CHOICE_QUESTION':
-                    embed_title = "❓ Question Answered!"
-                    embed_desc = "Your answer has been recorded."
-                elif work_type == 'ASSIGNMENT':
-                    embed_title = "📝 Assignment Submitted!"
-                    embed_desc = "We've successfully received your assignment."
-                
-                embed = discord.Embed(
-                    title=embed_title,
-                    description=embed_desc,
-                    color=discord.Color.green()
-                )
-                embed.add_field(name="Item", value=title, inline=False)
-                if 'alternateLink' in sub:
-                    embed.add_field(name="Link", value=f"[View Submission of your work]({sub['alternateLink']})", inline=False)
+                    if not target_user:
+                        continue 
                     
-                await target_user.send(embed=embed)
-                print(f"Sent DM submission alert for {title} to {target_user.name}")
-            except discord.Forbidden:
-                pass
+                    embed_title = "📝 Student Submission Received"
+                    embed_desc = "We've received your completed work!"
+                    
+                    if work_type == 'SHORT_ANSWER_QUESTION' or work_type == 'MULTIPLE_CHOICE_QUESTION':
+                        embed_title = "❓ Question Answered!"
+                        embed_desc = "Your answer has been recorded."
+                    elif work_type == 'ASSIGNMENT':
+                        embed_title = "📝 Assignment Submitted!"
+                        embed_desc = "We've successfully received your assignment."
+                    
+                    embed = discord.Embed(
+                        title=embed_title,
+                        description=embed_desc,
+                        color=discord.Color.green()
+                    )
+                    embed.add_field(name="Item", value=title, inline=False)
+                    if 'alternateLink' in sub:
+                        embed.add_field(name="Link", value=f"[View Submission of your work]({sub['alternateLink']})", inline=False)
+                        
+                    await target_user.send(embed=embed)
+                    print(f"Sent DM submission alert for {title} to {target_user.name}")
+                except discord.Forbidden:
+                    pass
 
     @poll_student_submissions.before_loop
     async def before_poll_student_submissions(self):
@@ -674,46 +713,55 @@ class CourseTasks(commands.Cog):
 
     @tasks.loop(seconds=10)
     async def pre_course_reminder_loop(self):
-        if not self.bot.active_course or not self.bot.enrollment_end_time or not self.bot.active_cohort_channel_id:
-            return
-            
-        if getattr(self.bot, 'pre_start_reminder_sent', False):
-            return
-            
         now = datetime.datetime.now(datetime.timezone.utc)
         
-        # Calculate 5% of topic cycle time (in seconds)
-        cycle_seconds = TOPIC_CYCLE_MINUTES * 60
-        five_percent_seconds = cycle_seconds * 0.05
-        
-        reminder_time = self.bot.enrollment_end_time - datetime.timedelta(seconds=five_percent_seconds)
-        
-        if now >= reminder_time:
-            self.bot.pre_start_reminder_sent = True
-            
-            cohort_channel = self.bot.get_channel(self.bot.active_cohort_channel_id)
-            if not cohort_channel:
-                return
+        for guild in self.bot.guilds:
+            db_config = database.get_server_config(guild.id)
+            if not db_config or not db_config['active_course_id'] or not db_config['enrollment_end_time'] or not db_config['cohort_channel_id']:
+                continue
                 
-            guild = cohort_channel.guild
-            # Count members in the cohort channel (excluding bots)
-            member_count = sum(1 for member in cohort_channel.members if not member.bot)
+            if db_config.get('pre_start_reminder_sent', False):
+                continue
+                
+            # Calculate 5% of topic cycle time (in seconds)
+            cycle_seconds = TOPIC_CYCLE_MINUTES * 60
+            five_percent_seconds = cycle_seconds * 0.05
             
-            target_channel = discord.utils.get(guild.text_channels, name="general")
-            if not target_channel and guild.text_channels:
-                 target_channel = guild.text_channels[0]
-                 
-            if target_channel:
-                embed = discord.Embed(
-                    title="⏰ Course Starting Soon!",
-                    description=f"The new cohort for **{self.bot.active_course['name']}** is about to begin!\n\nWe currently have **{member_count}** students ready in the new course channel.",
-                    color=discord.Color.gold()
-                )
-                try:
-                    await target_channel.send(embed=embed)
-                    print(f"Sent pre-course reminder to {target_channel.name} with {member_count} students ready.")
-                except discord.Forbidden:
-                    pass
+            enrollment_end = datetime.datetime.fromisoformat(db_config['enrollment_end_time'])
+            reminder_time = enrollment_end - datetime.timedelta(seconds=five_percent_seconds)
+            
+            if now >= reminder_time:
+                # Update DB to mark as sent
+                conn = database.get_connection()
+                c = conn.cursor()
+                c.execute('UPDATE server_config SET pre_start_reminder_sent = TRUE WHERE guild_id = %s', (guild.id,))
+                conn.commit()
+                conn.close()
+                
+                cohort_ch_id = db_config['cohort_channel_id']
+                cohort_channel = self.bot.get_channel(cohort_ch_id)
+                if not cohort_channel:
+                    continue
+                    
+                # Count members in the cohort channel (excluding bots)
+                member_count = sum(1 for member in cohort_channel.members if not member.bot)
+                
+                target_channel = discord.utils.get(guild.text_channels, name="general")
+                if not target_channel and guild.text_channels:
+                     target_channel = guild.text_channels[0]
+                     
+                if target_channel:
+                    course_name = db_config['active_course_name']
+                    embed = discord.Embed(
+                        title="⏰ Course Starting Soon!",
+                        description=f"The new cohort for **{course_name}** is about to begin!\n\nWe currently have **{member_count}** students ready in the new course channel.",
+                        color=discord.Color.gold()
+                    )
+                    try:
+                        await target_channel.send(embed=embed)
+                        print(f"Sent pre-course reminder to {target_channel.name} in {guild.name} with {member_count} students ready.")
+                    except discord.Forbidden:
+                        pass
 
     @pre_course_reminder_loop.before_loop
     async def before_pre_course_reminder_loop(self):
