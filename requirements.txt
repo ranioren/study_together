@@ -1,3 +1,4 @@
+reflex==0.8.28.post1
 streamlit
 google-api-python-client
 google-auth-httplib2
@@ -7,4 +8,7 @@ discord.py
 python-dotenv
 groq
 beautifulsoup4
-
+psycopg2-binary
+pgvector
+sentence-transformers
+faker

@@ -4,9 +4,9 @@ import datetime
 import os
 import io
 import asyncio
-import database
+from core import database
 from PIL import Image, ImageDraw, ImageFont
-from analytics_manager import log_analytics, check_streaks
+from bot.analytics.tracker import log_analytics, check_streaks
 
 TOPIC_CYCLE_MINUTES = 8
 

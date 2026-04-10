@@ -6,20 +6,23 @@ import datetime
 def save_quiz_scores(weekly_scores):
     """Persist quiz scores to a local JSON file."""
     try:
+        # Ensure directory exists
+        os.makedirs("data/quizzes", exist_ok=True)
         # Convert tuple keys to strings for JSON
         serializable_scores = {f"{k[0]}|{k[1]}": v for k, v in weekly_scores.items()}
-        with open("quiz_scores.json", "w") as f:
+        with open("data/quizzes/quiz_scores.json", "w") as f:
             json.dump(serializable_scores, f)
     except Exception as e:
         print(f"Error saving quiz scores: {e}")
 
 def log_analytics(guild_id, user_id, event_type, course_name, detail, is_correct):
     """Append an analytics event to a local CSV file."""
+    os.makedirs("data/analytics", exist_ok=True)
     if not guild_id:
         # Fallback if unknown guild
-        analytics_file = "analytics.csv"
+        analytics_file = "data/analytics/analytics.csv"
     else:
-        analytics_file = f"analytics_{guild_id}.csv"
+        analytics_file = f"data/analytics/analytics_{guild_id}.csv"
         
     file_exists = os.path.isfile(analytics_file)
     try:
@@ -33,10 +36,11 @@ def log_analytics(guild_id, user_id, event_type, course_name, detail, is_correct
 
 def log_user_email(guild_id, user_id, username, email):
     """Append a user email record to a global CSV file."""
+    os.makedirs("data/users", exist_ok=True)
     if not guild_id:
-        users_file = "users.csv"
+        users_file = "data/users/users.csv"
     else:
-        users_file = f"users_{guild_id}.csv"
+        users_file = f"data/users/users_{guild_id}.csv"
         
     file_exists = os.path.isfile(users_file)
     try:
@@ -50,9 +54,10 @@ def log_user_email(guild_id, user_id, username, email):
 
 def load_quiz_scores():
     """Load quiz scores from local JSON file."""
-    if os.path.exists("quiz_scores.json"):
+    quiz_file = "data/quizzes/quiz_scores.json"
+    if os.path.exists(quiz_file):
         try:
-            with open("quiz_scores.json", "r") as f:
+            with open(quiz_file, "r") as f:
                 data = json.load(f)
                 # Convert string keys back to tuples
                 return {tuple(map(int, k.split('|'))): v for k, v in data.items()}
@@ -63,9 +68,9 @@ def load_quiz_scores():
 async def check_streaks(guild_id, channel, user_id):
     """Phase 8: Check daily interaction and correct answer streaks."""
     if not guild_id:
-        analytics_file = "analytics.csv"
+        analytics_file = "data/analytics/analytics.csv"
     else:
-        analytics_file = f"analytics_{guild_id}.csv"
+        analytics_file = f"data/analytics/analytics_{guild_id}.csv"
         
     if not os.path.exists(analytics_file):
         return

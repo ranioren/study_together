@@ -1,8 +1,8 @@
 import discord
 import datetime
 from discord.ext import commands, tasks
-import database
-from analytics_manager import log_analytics, check_streaks, save_quiz_scores
+from core import database
+from bot.analytics.tracker import log_analytics, check_streaks, save_quiz_scores
 
 TOPIC_CYCLE_MINUTES = 8
 
@@ -33,7 +33,7 @@ class CourseTasks(commands.Cog):
         one_minute_ago = now - datetime.timedelta(minutes=1)
         
         for guild in self.bot.guilds:
-            analytics_file = f"analytics_{guild.id}.csv"
+            analytics_file = f"data/analytics/analytics_{guild.id}.csv"
             if not os.path.exists(analytics_file):
                 continue
 
@@ -83,7 +83,7 @@ class CourseTasks(commands.Cog):
         cycle_ago = now - datetime.timedelta(minutes=TOPIC_CYCLE_MINUTES)
         
         for guild in self.bot.guilds:
-            analytics_file = f"analytics_{guild.id}.csv"
+            analytics_file = f"data/analytics/analytics_{guild.id}.csv"
             if not os.path.exists(analytics_file):
                 continue
 
@@ -332,7 +332,7 @@ class CourseTasks(commands.Cog):
         import os
         
         guild = channel.guild
-        analytics_file = f"analytics_{guild.id}.csv"
+        analytics_file = f"data/analytics/analytics_{guild.id}.csv"
         
         engaged_users = set()
         if os.path.exists(analytics_file):

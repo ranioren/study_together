@@ -1,7 +1,7 @@
 import os
 import os.path
 import json
-import database
+from . import database
 
 # Relax token scope matching to avoid oauthlib errors when Google returns slightly different but functionally equivalent scopes
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
@@ -24,7 +24,7 @@ SCOPES = [
 ]
 
 class ClassroomManager:
-    def __init__(self, credentials_path="credentials.json"):
+    def __init__(self, credentials_path="config/credentials.json"):
         self.credentials_path = credentials_path
 
     def get_services(self, guild_id):
