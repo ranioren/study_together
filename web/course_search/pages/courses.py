@@ -66,6 +66,12 @@ def course_card(course: dict) -> rx.Component:
                 ),
                 class_name="flex items-center justify-between pt-4 border-t border-gray-50",
             ),
+            rx.el.button(
+                rx.icon("edit", class_name="h-4 w-4 mr-2"),
+                "Edit Course",
+                on_click=lambda: DashboardState.edit_course(course["id"]),
+                class_name="w-full mt-4 flex items-center justify-center py-2 bg-blue-50 text-blue-600 rounded-xl font-bold hover:bg-blue-100 transition-all text-xs",
+            ),
         ),
         class_name="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all",
     )
@@ -89,7 +95,7 @@ def courses_page() -> rx.Component:
                 rx.el.button(
                     rx.icon("plus", class_name="h-5 w-5 mr-2"),
                     "New Course",
-                    on_click=lambda: DashboardState.navigate_to("Course Builder"),
+                    on_click=DashboardState.create_new_course,
                     class_name="px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl shadow-md flex items-center transition-all",
                 ),
                 class_name="flex items-center justify-between mb-10",

@@ -32,6 +32,12 @@ def stat_card(item: dict) -> rx.Component:
 def dashboard_page() -> rx.Component:
     return dashboard_layout(
         rx.el.div(
+            # Dummy Data Banner
+            rx.el.div(
+                rx.el.p("⚠️ Note: The statistics and activity shown here are currently dummy data for demonstration purposes.", 
+                        class_name="text-amber-800 font-medium text-sm"),
+                class_name="w-full bg-amber-50 border border-amber-100 p-3 rounded-xl mb-8 flex items-center justify-center"
+            ),
             rx.el.div(
                 rx.foreach(DashboardState.stats, stat_card),
                 class_name="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8",
@@ -85,10 +91,15 @@ def dashboard_page() -> rx.Component:
                             on_click=lambda: DashboardState.navigate_to("Course Builder"),
                             class_name="w-full flex items-center justify-center py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-md hover:shadow-lg mb-3",
                         ),
-                        rx.el.button(
-                            rx.icon("bar-chart-2", class_name="h-4 w-4 mr-2"),
-                            "View Analytics",
-                            class_name="w-full flex items-center justify-center py-3 bg-white border border-gray-200 text-gray-700 rounded-xl font-bold hover:bg-gray-50 transition-all mb-3",
+                        rx.el.a(
+                            rx.el.button(
+                                rx.icon("message-square", class_name="h-4 w-4 mr-2"),
+                                "Connect to Discord!",
+                                class_name="w-full flex items-center justify-center py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-md hover:shadow-lg mb-3",
+                            ),
+                            href="https://discord.com/oauth2/authorize?client_id=1474401683210637423",
+                            is_external=True,
+                            class_name="w-full",
                         ),
                         rx.el.button(
                             rx.icon("users", class_name="h-4 w-4 mr-2"),

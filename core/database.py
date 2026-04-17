@@ -4,7 +4,7 @@ import os
 import json
 from datetime import datetime, timezone
 
-DB_URI = os.getenv("DATABASE_URL", "postgres://avnadmin:dummy_pass_for_github@pg-communilytics-ontheran-2746.h.aivencloud.com:21282/defaultdb?sslmode=require")
+DB_URI = os.getenv("DATABASE_URL") or os.getenv("AIVEN_DB_URL") or "postgres://avnadmin:dummy_pass_for_github@pg-communilytics-ontheran-2746.h.aivencloud.com:21282/defaultdb?sslmode=require"
 
 def get_connection():
     conn = psycopg2.connect(DB_URI)

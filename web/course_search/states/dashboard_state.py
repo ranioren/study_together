@@ -1,8 +1,11 @@
 import reflex as rx
 from typing import TypedDict, Literal
-from faker import Faker
+import json
+import os
+import uuid
+import datetime
 
-fake = Faker()
+
 
 
 class StatCard(TypedDict):
@@ -26,14 +29,15 @@ class Course(TypedDict):
     students: int
     progress: int
     last_updated: str
+    topics: list[dict]
 
 
 class DashboardState(rx.State):
     active_section: str = "Dashboard"
-    user_name: str = "Alex Johnson"
-    user_email: str = "alex.j@learningcommunity.edu"
+    user_name: str = "Local Dev User"
+    user_email: str = "dev@localhost"
     user_bio: str = (
-        "Passionate educator focusing on computer science and data literacy."
+        "Developer and educator exploring localized curriculum generation."
     )
     stats: list[StatCard] = [
         {
@@ -72,39 +76,28 @@ class DashboardState(rx.State):
         {"description": "New review: 5 stars on Data Science", "time": "3 hours ago"},
         {"description": "System backup completed", "time": "5 hours ago"},
     ]
-    courses: list[Course] = [
-        {
-            "id": "c1",
-            "title": "Python for Data Science",
-            "description": "Master Python libraries like Pandas, NumPy and Matplotlib for data analysis.",
-            "status": "Active",
-            "students": 450,
-            "progress": 65,
-            "last_updated": "2024-03-20",
-        },
-        {
-            "id": "c2",
-            "title": "Web Development Bootcamp",
-            "description": "Full-stack development with React, Node.js and PostgreSQL.",
-            "status": "Active",
-            "students": 320,
-            "progress": 40,
-            "last_updated": "2024-03-18",
-        },
-        {
-            "id": "c3",
-            "title": "AI Ethics & Governance",
-            "description": "Understanding the societal impact and responsible AI implementation.",
-            "status": "Draft",
-            "students": 0,
-            "progress": 0,
-            "last_updated": "2024-03-15",
-        },
-    ]
+    courses: list[Course] = []
     email_notifications: bool = True
     push_notifications: bool = False
     course_updates: bool = True
     student_messages: bool = True
+    
+    # Course Builder State
+    course_name: str = ""
+    course_author: str = ""
+    course_description: str = ""
+    my_topics: list[dict[str, str]] = []
+    current_editing_id: str = ""
+    full_courses: list[dict] = []
+    user_info: dict[str, str] = {
+        "email": "dev@localhost",
+        "name": "Local Dev User",
+        "picture": "/alex_avatar.png"
+    }
+
+    def on_load(self):
+        """Triggered when the page or state is initialized."""
+        self.load_courses()
 
     @rx.event
     def navigate_to(self, section: str):
@@ -120,3 +113,102 @@ class DashboardState(rx.State):
         elif section == "Logout":
             self.active_section = "Dashboard"
             return rx.redirect("/")
+
+    @rx.event
+    def logout(self):
+        self.user_info = {}
+        self.full_courses = []
+        self.courses = []
+        self.active_section = "Dashboard"
+        return rx.redirect("/")
+
+    def get_user_dir(self):
+        email = self.user_info.get("email", "dev@localhost")
+        # Go up to project root from web/course_search/states/
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        user_dir = os.path.join(base_dir, "data", email)
+        if not os.path.exists(user_dir):
+            os.makedirs(user_dir)
+        return user_dir
+
+    def load_courses(self):
+        user_dir = self.get_user_dir()
+        
+        # Migration logic for legacy single-file storage
+        email = self.user_info.get("email", "dev@localhost")
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        legacy_file = os.path.join(base_dir, "data", f"{email}.json")
+        if os.path.exists(legacy_file):
+            try:
+                with open(legacy_file, "r") as f:
+                    legacy_courses = json.load(f)
+                for c in legacy_courses:
+                    c_id = c.get("id")
+                    if c_id:
+                        with open(os.path.join(user_dir, f"{c_id}.json"), "w") as f:
+                            json.dump(c, f, indent=2)
+                # Rename legacy file to avoid re-migration
+                os.rename(legacy_file, legacy_file + ".bak")
+            except Exception as e:
+                print(f"Migration error: {e}")
+
+        # New style loading: one file per course
+        self.full_courses = []
+        try:
+            for filename in sorted(os.listdir(user_dir)):
+                if filename.endswith(".json"):
+                    with open(os.path.join(user_dir, filename), "r") as f:
+                        self.full_courses.append(json.load(f))
+            
+            self.courses = [
+                {
+                    "id": c["id"],
+                    "title": c["title"],
+                    "description": c["description"],
+                    "status": c.get("status", "Active"),
+                    "students": c.get("students", 0),
+                    "progress": c.get("progress", 0),
+                    "last_updated": c.get("last_updated", ""),
+                    "topics": c.get("topics", [])
+                }
+                for c in self.full_courses
+            ]
+        except Exception as e:
+            print(f"Error loading courses: {e}")
+
+    def save_courses(self):
+        user_dir = self.get_user_dir()
+        try:
+            for c in self.full_courses:
+                c_id = c.get("id")
+                if c_id:
+                    with open(os.path.join(user_dir, f"{c_id}.json"), "w") as f:
+                        json.dump(c, f, indent=2)
+            self.load_courses() # Refresh summaries
+        except Exception as e:
+            print(f"Error saving courses: {e}")
+
+    def create_new_course(self):
+        """Reset builder state and navigate to builder."""
+        self.course_name = ""
+        self.course_description = ""
+        self.course_author = ""
+        self.my_topics = []
+        self.current_editing_id = ""
+        return self.navigate_to("Course Builder")
+
+    def edit_course(self, course_id: str):
+        """Load a course into the builder for editing."""
+        course = None
+        for c in self.full_courses:
+            if c["id"] == course_id:
+                course = c
+                break
+        
+        if course:
+            self.current_editing_id = course["id"]
+            self.course_name = course.get("title", "")
+            self.course_description = course.get("description", "")
+            self.course_author = course.get("author", "")
+            self.my_topics = course.get("topics", [])
+            return self.navigate_to("Course Builder")

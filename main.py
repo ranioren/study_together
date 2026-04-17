@@ -43,7 +43,7 @@ def main():
     
     # Start Reflex Web App
     # We need to run this from the web/ directory
-    web_cmd = "reflex run"
+    web_cmd = f"\"{sys.executable}\" -m reflex run"
     t_web = threading.Thread(target=run_process, args=(web_cmd, "[WEB]", "web"), name="WebThread")
     threads.append(t_web)
 

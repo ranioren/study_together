@@ -1,7 +1,10 @@
 import os
+from dotenv import load_dotenv
+# Load environment variables early
+load_dotenv()
+
 import discord
 from discord.ext import commands
-from dotenv import load_dotenv
 import asyncio
 from aiohttp import web
 
@@ -10,9 +13,6 @@ from core.classroom_manager import ClassroomManager
 from core.quiz_manager import QuizManager
 from core.database import init_db
 from bot.analytics.tracker import load_quiz_scores
-
-# Load environment variables
-load_dotenv()
 
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 TOPIC_CYCLE_MINUTES = 8

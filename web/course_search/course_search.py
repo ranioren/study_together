@@ -54,12 +54,6 @@ class State(DashboardState):
     search_query: str = ""
     results: list[dict[str, str]] = []
     is_loading: bool = False
-    
-    # Course Builder State
-    course_name: str = ""
-    course_author: str = ""
-    course_description: str = ""
-    my_topics: list[dict[str, str]] = []
     upload_target_topic_id: str = ""
     
     def set_upload_target(self, topic_id: str):
@@ -95,12 +89,10 @@ class State(DashboardState):
     classroom_course_url: str = ""
     show_classroom_dialog: bool = False
     classroom_progress: list[str] = []
-
-    # Authentication State
-    user_info: dict[str, str] = {}
     
     def logout(self):
-        self.user_info = {}
+        # Override logout in base state if needed, or just use parent
+        return super().logout()
         
     def login_with_google(self):
         if LOCAL_DEV:
@@ -110,6 +102,7 @@ class State(DashboardState):
                 "email": "dev@localhost",
                 "picture": "/alex_avatar.png"
             }
+            self.load_courses()
             return rx.redirect("/dashboard")
 
         from google_auth_oauthlib.flow import Flow
@@ -160,6 +153,7 @@ class State(DashboardState):
                 "email": user_info.get("email", ""),
                 "picture": user_info.get("picture", "")
             }
+            self.load_courses()
         except Exception as e:
             print(f"Auth error: {e}")
             
@@ -379,22 +373,48 @@ class State(DashboardState):
                 self.my_topics[i]["test_link"] = new_val
                 break
 
-    def save_course(self):
+    def _internal_save(self):
+        """Internal helper to save the current builder state without clearing it or navigating."""
         import datetime
-        new_course = {
-            "id": str(uuid.uuid4())[:8],
+        course_data = {
             "title": self.course_name if self.course_name else "Untitled Course",
             "description": self.course_description if self.course_description else "New custom course",
+            "author": self.course_author,
             "status": "Draft",
             "students": 0,
             "progress": 0,
             "last_updated": datetime.date.today().strftime("%Y-%m-%d"),
+            "topics": self.my_topics
         }
-        self.courses.append(new_course)
+
+        if self.current_editing_id:
+            for i, c in enumerate(self.full_courses):
+                if c["id"] == self.current_editing_id:
+                    course_data["id"] = self.current_editing_id
+                    course_data["status"] = c.get("status", "Draft")
+                    course_data["students"] = c.get("students", 0)
+                    course_data["progress"] = c.get("progress", 0)
+                    self.full_courses[i] = course_data
+                    break
+        else:
+            self.current_editing_id = str(uuid.uuid4())[:8]
+            course_data["id"] = self.current_editing_id
+            self.full_courses.append(course_data)
+        
+        self.save_courses()
+        return self.current_editing_id
+
+    def save_course(self):
+        """Save course and reset builder UI."""
+        self._internal_save()
+        
+        # Reset builder state after saving
         self.course_name = ""
         self.course_description = ""
         self.course_author = ""
         self.my_topics = []
+        self.current_editing_id = ""
+        
         return DashboardState.navigate_to("Your Courses")
 
     def update_topic_quiz_form_id(self, topic_id: str, new_val: str):
@@ -410,6 +430,7 @@ class State(DashboardState):
             'https://www.googleapis.com/auth/classroom.topics',
             'https://www.googleapis.com/auth/classroom.courseworkmaterials',
             'https://www.googleapis.com/auth/classroom.coursework.me',
+            'https://www.googleapis.com/auth/classroom.coursework.students',
             'https://www.googleapis.com/auth/forms.body',
             'https://www.googleapis.com/auth/drive.file'
         ]
@@ -557,10 +578,16 @@ class State(DashboardState):
     def add_to_google_classroom(self):
         self.is_loading = True
         self.classroom_course_url = ""
-        self.classroom_progress = ["🔌 Parsing Local Environment & API Requirements..."]
+        self.classroom_progress = ["💾 Auto-saving current course state to local database..."]
         yield
         
         try:
+            # Step 0: Auto-save local draft
+            self._internal_save()
+            self.classroom_progress.append("✅ Local draft secured.")
+            self.classroom_progress.append("🔌 Initializing Google Workspace secure connection...")
+            yield
+            
             creds, err = self.get_classroom_creds()
             if err:
                 self.classroom_progress.append(f"⚠️ {err}")
@@ -582,7 +609,7 @@ class State(DashboardState):
                 'descriptionHeading': self.course_author if self.course_author.strip() else 'AI Curriculum Builder',
                 'description': self.course_description if self.course_description.strip() else 'Generated Course via Curriculum Builder',
                 'ownerId': 'me',
-                'courseState': 'PROVISIONED'
+                'courseState': 'PROVISIONED' # Reverted to PROVISIONED as personal accounts cannot create ACTIVE courses via API
             }
             
             course = service.courses().create(body=course_body).execute()
@@ -596,10 +623,28 @@ class State(DashboardState):
             self.classroom_progress.append("🔄 Mapping Curriculum Topics into Google Classroom structure...")
             yield
             
+            # Helper to sanitize URLs
+            def sanitize_url(url):
+                u = url.strip()
+                if not u: return None
+                if not (u.startswith('http://') or u.startswith('https://')):
+                    return 'https://' + u
+                return u
+
             # Create Topics (Headers) in the generated classroom
+            used_topic_names = {}
             index = 1
             for topic in self.my_topics:
-                topic_title = topic['name'] if topic['name'].strip() else 'Unnamed Topic'
+                raw_title = topic['name'] if topic['name'].strip() else 'Unnamed Topic'
+                
+                # Handle Duplicate Topic Names
+                topic_title = raw_title
+                if topic_title in used_topic_names:
+                    used_topic_names[topic_title] += 1
+                    topic_title = f"{topic_title} ({used_topic_names[topic_title]})"
+                    self.classroom_progress.append(f"  ℹ️ Duplicate topic name found. Renaming to '{topic_title}'")
+                else:
+                    used_topic_names[topic_title] = 1
                 self.classroom_progress.append(f"  👉 Generating module header: {topic_title}...")
                 yield
                 
@@ -613,10 +658,12 @@ class State(DashboardState):
                 materials_list = []
                 topic_urls = topic.get("urls", "")
                 if topic_urls:
-                    for url in topic_urls.split('\\n'):
-                        if url.strip():
+                    # Support both real newlines and escaped newlines
+                    for url in topic_urls.replace('\\n', '\n').split('\n'):
+                        s_url = sanitize_url(url)
+                        if s_url:
                             materials_list.append({
-                                'link': {'url': url.strip()}
+                                'link': {'url': s_url}
                             })
                             
                 # Handle Google Drive Folder and File Uploads
@@ -669,7 +716,11 @@ class State(DashboardState):
                 try:
                     service.courses().courseWorkMaterials().create(courseId=course_id, body=material_body).execute()
                 except Exception as mat_e:
-                    self.classroom_progress.append(f"  ⚠️ Failed to publish materials: {str(mat_e)[:30]}")
+                    # Log more detail if possible
+                    err_msg = str(mat_e)
+                    if "Requested entity was not found" in err_msg:
+                        err_msg = "Topic ID not found yet (latency)"
+                    self.classroom_progress.append(f"  ⚠️ Failed to publish materials: {err_msg[:40]}...")
                     yield
                     
                 # Handle Topic Assessments
@@ -679,10 +730,8 @@ class State(DashboardState):
                     yield
                     
                     project_materials = []
-                    project_url = topic.get("project_link", "").strip()
+                    project_url = sanitize_url(topic.get("project_link", ""))
                     if project_url:
-                        if not project_url.startswith('http'):
-                            project_url = 'https://' + project_url
                         project_materials.append({'link': {'url': project_url}})
                         
                     project_body = {
@@ -696,17 +745,15 @@ class State(DashboardState):
                     try:
                         service.courses().courseWork().create(courseId=course_id, body=project_body).execute()
                     except Exception as proj_e:
-                        self.classroom_progress.append(f"  ⚠️ Failed to create Project: {str(proj_e)[:30]}")
+                        self.classroom_progress.append(f"  ⚠️ Failed to create Project: {str(proj_e)[:40]}...")
                         yield
-                    
+                                            
                 elif assessment_type == "Test":
                     self.classroom_progress.append(f"  📝 Creating Test Question for {topic_title}...")
                     yield
                     test_materials = []
-                    test_url = topic.get("test_link", "").strip()
+                    test_url = sanitize_url(topic.get("test_link", ""))
                     if test_url:
-                        if not test_url.startswith('http'):
-                            test_url = 'https://' + test_url
                         test_materials.append({'link': {'url': test_url}})
                         
                     test_question = topic.get("test_question", "").strip()
@@ -726,7 +773,7 @@ class State(DashboardState):
                     try:
                         service.courses().courseWork().create(courseId=course_id, body=test_body).execute()
                     except Exception as test_e:
-                        self.classroom_progress.append(f"  ⚠️ Failed to create Test: {str(test_e)[:30]}")
+                        self.classroom_progress.append(f"  ⚠️ Failed to create Test: {str(test_e)[:40]}...")
                         yield
                     
                 elif assessment_type == "Quiz":
@@ -751,7 +798,7 @@ class State(DashboardState):
                     try:
                         service.courses().courseWork().create(courseId=course_id, body=quiz_body).execute()
                     except Exception as quiz_e:
-                        self.classroom_progress.append(f"  ⚠️ Failed to create Quiz: {str(quiz_e)[:30]}")
+                        self.classroom_progress.append(f"  ⚠️ Failed to create Quiz: {str(quiz_e)[:40]}...")
                         yield
                                 
                 index += 1
@@ -1310,25 +1357,25 @@ app = rx.App(
         """),
     ],
 )
-app.add_page(index, route="/")
+app.add_page(index, route="/", on_load=DashboardState.on_load)
 
 app.add_page(
     dashboard_page,
     route="/dashboard",
-    on_load=lambda: DashboardState.set_active_section("Dashboard"),
+    on_load=[DashboardState.on_load, lambda: DashboardState.set_active_section("Dashboard")],
 )
 app.add_page(
     courses_page,
     route="/courses",
-    on_load=lambda: DashboardState.set_active_section("Your Courses"),
+    on_load=[DashboardState.on_load, lambda: DashboardState.set_active_section("Your Courses")],
 )
 app.add_page(
     settings_page,
     route="/settings",
-    on_load=lambda: DashboardState.set_active_section("Settings"),
+    on_load=[DashboardState.on_load, lambda: DashboardState.set_active_section("Settings")],
 )
 app.add_page(
     course_builder_page,
     route="/course-builder",
-    on_load=lambda: DashboardState.set_active_section("Your Courses"),
+    on_load=[DashboardState.on_load, lambda: DashboardState.set_active_section("Your Courses")],
 )
