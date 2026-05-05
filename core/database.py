@@ -32,9 +32,15 @@ def init_db():
     c.execute('''
         CREATE TABLE IF NOT EXISTS server_oauth_creds (
             guild_id BIGINT PRIMARY KEY,
+            user_id BIGINT,
             credentials_json TEXT
         )
     ''')
+    # Ensure user_id column exists for existing tables
+    try:
+        c.execute("ALTER TABLE server_oauth_creds ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    except:
+        pass
     
     # Table for tracking expected topic timing events separately per guild
     c.execute('''
@@ -122,17 +128,27 @@ def get_server_config(guild_id):
     conn.close()
     return dict(row) if row else None
 
-def save_google_creds(guild_id, creds_dict):
+def save_google_creds(guild_id, creds_dict, user_id=None):
     conn = get_connection()
     c = conn.cursor()
     c.execute('''
-        INSERT INTO server_oauth_creds (guild_id, credentials_json)
-        VALUES (%s, %s)
+        INSERT INTO server_oauth_creds (guild_id, user_id, credentials_json)
+        VALUES (%s, %s, %s)
         ON CONFLICT(guild_id) DO UPDATE SET
-            credentials_json=excluded.credentials_json
-    ''', (guild_id, json.dumps(creds_dict)))
+            credentials_json=excluded.credentials_json,
+            user_id=excluded.user_id
+    ''', (guild_id, user_id, json.dumps(creds_dict)))
     conn.commit()
     conn.close()
+
+def get_user_google_creds(user_id):
+    """Checks if a user has any Google credentials stored across any guild."""
+    conn = get_connection()
+    c = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    c.execute("SELECT credentials_json FROM server_oauth_creds WHERE user_id = %s LIMIT 1", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    return json.loads(row['credentials_json']) if row else None
 
 def get_google_creds(guild_id):
     conn = get_connection()

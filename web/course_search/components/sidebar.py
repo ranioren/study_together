@@ -17,7 +17,7 @@ def nav_item(label: str, icon: str) -> rx.Component:
                 is_active, "font-semibold text-white", "font-medium text-gray-600"
             ),
         ),
-        on_click=lambda: DashboardState.navigate_to(label),
+        on_click=DashboardState.navigate_sidebar(label),
         class_name=rx.cond(
             is_active,
             "flex items-center w-full p-3 rounded-xl bg-blue-600 shadow-sm transition-all mb-2",
@@ -67,13 +67,13 @@ def sidebar() -> rx.Component:
                         ),
                         class_name="flex items-center gap-3",
                     ),
-                    on_click=lambda: DashboardState.navigate_to("Settings"),
+                    on_click=DashboardState.set_active_settings_nav,
                     class_name="w-full p-4 hover:bg-gray-50 transition-colors border-t border-gray-100",
                 ),
                 rx.el.button(
                     rx.icon("log-out", class_name="h-4 w-4 mr-2"),
                     "Logout",
-                    on_click=lambda: DashboardState.navigate_to("Logout"),
+                    on_click=DashboardState.logout,
                     class_name="w-full p-4 flex items-center justify-center text-xs font-bold text-red-500 hover:bg-red-50 transition-colors",
                 ),
                 class_name="mt-auto",

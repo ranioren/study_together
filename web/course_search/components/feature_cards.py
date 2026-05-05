@@ -1,13 +1,14 @@
 import reflex as rx
+from typing import Optional
 from course_search.states.chat_state import ChatState
 
 
 def feature_card(
     title: str,
     subtitle: str,
-    icon_name: str | None,
+    icon_name: Optional[str],
     dot_color: str,
-    image_src: str | None = None,
+    image_src: Optional[str] = None,
 ) -> rx.Component:
     return rx.el.button(
         rx.el.div(
@@ -34,7 +35,7 @@ def feature_card(
             ),
             class_name="flex items-center gap-4 p-4",
         ),
-        on_click=lambda: ChatState.select_feature(title),
+        on_click=ChatState.select_feature(title),
         class_name="w-full bg-white border border-gray-100 rounded-2xl shadow-sm hover:shadow-md hover:border-blue-200 hover:-translate-y-0.5 transition-all duration-200",
     )
 

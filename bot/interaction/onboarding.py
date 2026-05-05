@@ -8,6 +8,74 @@ from core.classroom_manager import ClassroomManager
 from bot.analytics.tracker import log_user_email # Will create this
 
 class Onboarding(commands.Cog):
+    @commands.Cog.listener()
+    async def on_guild_join(self, guild):
+        """Sends a welcome DM to the guild owner when the bot joins."""
+        from core import database
+        
+        owner = guild.owner
+        if not owner:
+            try:
+                owner = await guild.fetch_member(guild.owner_id)
+            except:
+                pass
+                
+        if owner:
+            # Check if this guild already has credentials (re-join)
+            has_creds = database.get_google_creds(guild.id) is not None
+            
+            # If not, check if the owner has authenticated on ANY other server
+            if not has_creds:
+                owner_creds = database.get_user_google_creds(owner.id)
+                if owner_creds:
+                    # Auto-save these creds for the new guild!
+                    database.save_google_creds(guild.id, owner_creds, user_id=owner.id)
+                    has_creds = True
+                    print(f"Auto-provisioned {guild.name} with existing credentials of owner {owner.name}")
+            
+            try:
+                embed = discord.Embed(
+                    title="🎓 Welcome to Kiefer Learning!",
+                    description=(
+                        f"Thanks for adding me to **{guild.name}**! I'm here to help you automate your "
+                        "learning communities and sync them with Google Classroom.\n\n"
+                        "**To get started, follow these steps:**"
+                    ),
+                    color=discord.Color.blue()
+                )
+                embed.add_field(
+                    name="1️⃣ Create Admin Space",
+                    value="In your server, type `!setup_admin`. I'll create a private channel for you to manage everything.",
+                    inline=False
+                )
+                
+                if not has_creds:
+                    embed.add_field(
+                        name="2️⃣ Link Google Account",
+                        value="In the new `#course-admin` channel, type `!auth_google` to connect your Google Classroom account.",
+                        inline=False
+                    )
+                    next_step_num = "3️⃣"
+                else:
+                    embed.add_field(
+                        name="✅ Google Account Connected",
+                        value="I see you've already linked your Google Classroom account! You can skip the authentication step.",
+                        inline=False
+                    )
+                    next_step_num = "2️⃣"
+                    
+                embed.add_field(
+                    name=f"{next_step_num} Build a Course",
+                    value="Visit our [Web Dashboard](http://localhost:3000) (or your hosted URL) to design your syllabus and launch it to your students!",
+                    inline=False
+                )
+                embed.set_footer(text="I'm excited to help you teach!")
+                
+                await owner.send(embed=embed)
+                print(f"Sent welcome DM to owner of {guild.name}: {owner.name}")
+            except discord.Forbidden:
+                print(f"Could not send welcome DM to owner of {guild.name}. DMs might be disabled.")
+
     def __init__(self, bot):
         self.bot = bot
         # Use bot's existing attributes or move them to self if appropriate

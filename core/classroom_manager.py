@@ -187,7 +187,7 @@ class ClassroomManager:
             print(f"Error fetching or exporting Drive file {file_id}. Note: We currently only support text export for Google Docs. {error}")
             return ""
 
-    def get_auth_url(self, guild_id):
+    def get_auth_url(self, guild_id, user_id=None):
         """Generate the OAuth2 consent URL for a guild owner to link their account."""
         if not os.path.exists(self.credentials_path):
             raise FileNotFoundError(f"'{self.credentials_path}' not found.")
@@ -201,16 +201,17 @@ class ClassroomManager:
             redirect_uri=redirect_uri
         )
         
-        # We pass guild_id as state so we know who authorized us when they return
+        # We pass guild_id (and optionally user_id) as state
+        state_str = f"{guild_id}:{user_id}" if user_id else str(guild_id)
         auth_url, _ = flow.authorization_url(
             access_type='offline',
             include_granted_scopes='true',
             prompt='consent',
-            state=str(guild_id)
+            state=state_str
         )
         return auth_url
         
-    def exchange_code(self, guild_id, code):
+    def exchange_code(self, guild_id, code, user_id=None):
         """Exchange the auth code for tokens and save to DB."""
         if not os.path.exists(self.credentials_path):
             return False
@@ -227,7 +228,7 @@ class ClassroomManager:
         try:
             flow.fetch_token(code=code)
             creds = flow.credentials
-            database.save_google_creds(guild_id, json.loads(creds.to_json()))
+            database.save_google_creds(guild_id, json.loads(creds.to_json()), user_id=user_id)
             return True
         except Exception as e:
             print(f"Error exchanging OAuth code for guild {guild_id}: {e}")

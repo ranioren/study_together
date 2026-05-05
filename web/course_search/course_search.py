@@ -39,7 +39,8 @@ db_url = os.getenv("AIVEN_DB_URL")
 # Load model globally so it's cached in memory during server run
 print("Loading sentence-transformers model...")
 try:
-    model = SentenceTransformer('all-MiniLM-L6-v2')
+    from sentence_transformers import SentenceTransformer
+    model = SentenceTransformer("all-MiniLM-L6-v2")
 except Exception as e:
     print(f"Model load error: {e}")
     model = None
@@ -52,6 +53,7 @@ class State(DashboardState):
     """The app state."""
     # Search State
     search_query: str = ""
+    search_source: str = "All"
     results: list[dict[str, str]] = []
     is_loading: bool = False
     upload_target_topic_id: str = ""
@@ -197,6 +199,12 @@ class State(DashboardState):
             
             new_results = []
             for r in rows:
+                course_url_str = str(r[5]).lower()
+                if self.search_source == "Coursera" and "coursera" not in course_url_str:
+                    continue
+                if self.search_source == "Microsoft Learn" and "microsoft" not in course_url_str:
+                    continue
+
                 raw_units = r[4]
                 units_parsed = []
                 if raw_units and isinstance(raw_units, list):
@@ -818,8 +826,20 @@ def render_search_result(result: dict[str, str]):
     return rx.box(
         rx.vstack(
             rx.heading(result["module_name"], size="4", color="blue.600"),
-            rx.text(f"From Course - {result['course_slug']}", font_weight="bold", size="2"),
-            rx.text(result["description"].replace('â€¢', '-').replace('Â', ''), size="1", color="gray.600"),
+            rx.hstack(
+                rx.cond(
+                    result["course_url"].to_string().contains("coursera"),
+                    rx.image(src="/coursera.webp", height="20px", width="auto", object_fit="contain"),
+                    rx.cond(
+                        result["course_url"].to_string().contains("microsoft"),
+                        rx.image(src="/msft.png", height="20px", width="20px", object_fit="contain")
+                    )
+                ),
+                rx.text(f"From Course - {result['course_slug']}", font_weight="bold", size="2"),
+                align_items="center",
+                spacing="2"
+            ),
+            rx.text(result["description"], size="1", color="gray.600"),
             rx.cond(
                 result["units"] != "",
                 rx.el.details(
@@ -953,7 +973,20 @@ def render_builder_topic(topic: dict[str, str]):
 
             rx.cond(
                 topic["source"] != "Manual",
-                rx.text(f"Imported from: {topic['source']}", size="1", color="gray.500", margin_top="3")
+                rx.hstack(
+                    rx.cond(
+                        topic["urls"].to_string().contains("coursera"),
+                        rx.image(src="/coursera.webp", height="20px", width="auto", object_fit="contain"),
+                        rx.cond(
+                            topic["urls"].to_string().contains("microsoft"),
+                            rx.image(src="/msft.png", height="20px", width="20px", object_fit="contain"),
+                            rx.text(topic["source"], size="1", font_weight="bold", color="gray.700")
+                        )
+                    ),
+                    margin_top="3",
+                    align_items="center",
+                    spacing="2"
+                )
             ),
             rx.divider(margin_y="2"),
             rx.hstack(
@@ -982,7 +1015,7 @@ def render_builder_topic(topic: dict[str, str]):
 
 def course_builder_page() -> rx.Component:
     return dashboard_layout(
-        rx.container(
+        rx.box(
         # File Upload Modal
         rx.cond(
             State.upload_target_topic_id != "",
@@ -1097,70 +1130,78 @@ def course_builder_page() -> rx.Component:
         rx.heading("Platform: Build Your Own Course", size="8", margin_bottom="1rem", text_align="center"),
         
         rx.flex(
-            # LEFT SIDE: Course Builder (Clean border without big shadow)
+            # LEFT SIDE: Course Builder
             rx.box(
-                rx.box(
-                    rx.heading("Course Details", class_name="text-lg font-bold text-gray-900 mb-4"),
-                    rx.vstack(
-                        rx.input(placeholder="Course Name", value=State.course_name, on_change=State.set_course_name, width="100%"),
-                        rx.input(placeholder="Author Name", value=State.course_author, on_change=State.set_course_author, width="100%"),
-                        rx.text_area(placeholder="General Course Outline or Description...", value=State.course_description, on_change=State.set_course_description, width="100%"),
-                        width="100%"
-                    ),
-                    class_name="w-full bg-white p-6 rounded-2xl border border-gray-100 shadow-sm mb-6"
-                ),
                 rx.vstack(
-                    rx.hstack(
-                        rx.heading("Curriculum Topics", class_name="text-lg font-bold text-gray-900"),
-                        rx.spacer(),
-                        rx.button(rx.icon("plus", class_name="mr-2 h-4 w-4"), "Add Blank Topic", on_click=State.add_blank_topic, size="2", color_scheme="blue"),
-                        width="100%",
-                        align_items="center"
-                    ),
-                    
-                    rx.cond(
-                        State.my_topics.length() > 0,
+                    rx.box(
+                        rx.heading("Course Details", class_name="text-lg font-bold text-gray-900 mb-4"),
                         rx.vstack(
-                            rx.foreach(
-                                State.my_topics,
-                                render_builder_topic
-                            ),
+                            rx.input(placeholder="Course Name", value=State.course_name, on_change=State.set_course_name, width="100%"),
+                            rx.input(placeholder="Author Name", value=State.course_author, on_change=State.set_course_author, width="100%"),
+                            rx.text_area(placeholder="General Course Outline or Description...", value=State.course_description, on_change=State.set_course_description, width="100%"),
                             width="100%"
                         ),
-                        rx.box(
-                            rx.text("No topics added yet. Add a blank one or search for modules!", class_name="text-gray-500 font-medium text-sm text-center"),
-                            class_name="w-full bg-gray-50 p-6 rounded-2xl border border-dashed border-gray-200 mt-2"
-                        )
+                        width="100%",
+                        margin_bottom="2"
                     ),
-                    
-                    rx.divider(margin_y="4"),
-                    
-                    # Bottom Action Buttons
-                    rx.hstack(
-                        rx.spacer(),
-                        rx.button(
-                            "Save Course", 
-                            on_click=State.save_course, 
-                            color_scheme="blue",
-                            size="3"
+                    rx.box(height="1.5rem"),
+                    rx.divider(border_color="gray.300", border_width="1px"),
+                    rx.box(height="1.5rem"),
+                    rx.vstack(
+                        rx.hstack(
+                            rx.heading("Curriculum Topics", class_name="text-lg font-bold text-gray-900"),
+                            rx.spacer(),
+                            rx.button(rx.icon("plus", class_name="mr-2 h-4 w-4"), "Add Blank Topic", on_click=State.add_blank_topic, size="2", color_scheme="blue"),
+                            width="100%",
+                            align_items="center"
                         ),
-                        rx.button(
-                            rx.icon(tag="graduation-cap", class_name="mr-2"),
-                            "Add to Google Classroom", 
-                            on_click=State.confirm_classroom,
-                            color_scheme="green",
-                            variant="soft",
-                            size="3"
+                        
+                        rx.cond(
+                            State.my_topics.length() > 0,
+                            rx.vstack(
+                                rx.foreach(
+                                    State.my_topics,
+                                    render_builder_topic
+                                ),
+                                width="100%"
+                            ),
+                            rx.box(
+                                rx.text("No topics added yet. Add a blank one or search for modules!", class_name="text-gray-500 font-medium text-sm text-center"),
+                                class_name="w-full bg-gray-50 p-6 rounded-2xl border border-dashed border-gray-200 mt-2"
+                            )
                         ),
+                        
+                        rx.divider(margin_y="4"),
+                        
+                        # Bottom Action Buttons
+                        rx.hstack(
+                            rx.spacer(),
+                            rx.button(
+                                "Save Course", 
+                                on_click=State.save_course, 
+                                color_scheme="blue",
+                                size="3"
+                            ),
+                            rx.button(
+                                rx.icon(tag="graduation-cap", class_name="mr-2"),
+                                "Add to Google Classroom", 
+                                on_click=State.confirm_classroom,
+                                color_scheme="green",
+                                variant="soft",
+                                size="3"
+                            ),
+                            width="100%",
+                            spacing="3"
+                        ),
+                        
                         width="100%",
                         spacing="3"
                     ),
-                    
                     width="100%",
-                    spacing="3"
+                    spacing="0"
                 ),
+                class_name="w-full bg-white p-6 rounded-2xl border border-gray-100 shadow-sm",
                 flex="1",
-                padding="0",
                 height="fit-content"
             ),
             
@@ -1169,16 +1210,34 @@ def course_builder_page() -> rx.Component:
                 rx.heading("Explore Modules Database", class_name="text-lg font-bold text-gray-900 mb-4"),
                 rx.form(
                     rx.hstack(
-                        rx.box(
-                            rx.icon("search", class_name="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2"),
-                            rx.input(
-                                placeholder="Search topics...",
-                                value=State.search_query,
-                                on_change=State.set_search_query,
-                                class_name="pl-10",
-                                width="100%"
+                        rx.vstack(
+                            rx.text("Search query", size="1", color="transparent", font_weight="bold"),
+                            rx.box(
+                                rx.icon("search", class_name="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2"),
+                                rx.input(
+                                    placeholder="Search topics...",
+                                    value=State.search_query,
+                                    on_change=State.set_search_query,
+                                    class_name="pl-10",
+                                    width="100%"
+                                ),
+                                class_name="relative w-full"
                             ),
-                            class_name="relative w-full"
+                            width="100%",
+                            flex="2",
+                            spacing="1"
+                        ),
+                        rx.vstack(
+                            rx.text("Data Source", size="1", font_weight="bold", color="gray.500"),
+                            rx.select(
+                                ["All", "Coursera", "Microsoft Learn"],
+                                value=State.search_source,
+                                on_change=State.set_search_source,
+                                size="2",
+                                width="140px"
+                            ),
+                            spacing="1",
+                            align_items="start"
                         ),
                         rx.button(
                             "Clear",
@@ -1193,12 +1252,17 @@ def course_builder_page() -> rx.Component:
                             is_loading=State.is_loading,
                             color_scheme="blue"
                         ),
-                        width="100%"
+                        width="100%",
+                        align_items="end",
+                        spacing="3"
                     ),
                     on_submit=State.perform_search,
                     width="100%",
-                    margin_bottom="8"
+                    margin_bottom="6"
                 ),
+                rx.box(height="1.5rem"),
+                rx.divider(border_color="gray.300", border_width="1px"),
+                rx.box(height="1.5rem"),
                 rx.cond(
                     State.is_loading,
                     rx.center(rx.spinner(size="3"), padding="10", width="100%"),
@@ -1225,7 +1289,8 @@ def course_builder_page() -> rx.Component:
             align_items="flex-start"
         ),
         padding="6",
-        max_width="1400px"
+        width="100%",
+        max_width="100%"
         )
     )
 
@@ -1270,22 +1335,27 @@ def index() -> rx.Component:
                 rx.vstack(
                     rx.el.h1(
                         "#LearningCommunity",
-                        class_name="text-6xl md:text-8xl font-black tracking-tighter mb-2 bg-clip-text text-transparent bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 animate-gradient-x",
-                        style={"lineHeight": "1.1"}
+                        class_name="text-6xl md:text-8xl font-black tracking-tighter mb-2 text-center bg-clip-text text-transparent bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 animate-gradient-x w-full",
+                        style={"lineHeight": "1.1", "textAlign": "center"}
                     ),
                     rx.el.h2(
                         "#CommunityLearning",
-                        class_name="text-2xl md:text-3xl font-bold text-gray-800 mb-6 tracking-tight",
+                        class_name="text-2xl md:text-3xl font-bold text-center text-gray-800 mb-6 tracking-tight w-full",
+                        style={"textAlign": "center"}
                     ),
                     rx.el.p(
                         "Educate your community, Share your knowledge & experience, Monetize from what you built!",
-                        class_name="text-lg md:text-xl font-medium text-gray-500 max-w-[600px] text-center mb-12",
+                        class_name="text-lg md:text-xl font-medium text-gray-500 max-w-[600px] text-center mb-12 w-full",
+                        style={"textAlign": "center"}
                     ),
                     align_items="center",
+                    justify_content="center",
+                    text_align="center",
+                    width="100%",
                     spacing="0",
                     padding_top="8rem",
                     padding_bottom="4rem",
-                    class_name="animate-in fade-in slide-in-from-bottom-8 duration-1000"
+                    class_name="animate-in fade-in slide-in-from-bottom-8 duration-1000 w-full flex flex-col items-center"
                 ),
                 
                 # Glassmorphic Main Container
@@ -1362,20 +1432,20 @@ app.add_page(index, route="/", on_load=DashboardState.on_load)
 app.add_page(
     dashboard_page,
     route="/dashboard",
-    on_load=[DashboardState.on_load, lambda: DashboardState.set_active_section("Dashboard")],
+    on_load=[DashboardState.on_load, DashboardState.set_active_dashboard],
 )
 app.add_page(
     courses_page,
     route="/courses",
-    on_load=[DashboardState.on_load, lambda: DashboardState.set_active_section("Your Courses")],
+    on_load=[DashboardState.on_load, DashboardState.set_active_courses],
 )
 app.add_page(
     settings_page,
     route="/settings",
-    on_load=[DashboardState.on_load, lambda: DashboardState.set_active_section("Settings")],
+    on_load=[DashboardState.on_load, DashboardState.set_active_settings],
 )
 app.add_page(
     course_builder_page,
     route="/course-builder",
-    on_load=[DashboardState.on_load, lambda: DashboardState.set_active_section("Your Courses")],
+    on_load=[DashboardState.on_load, DashboardState.set_active_courses],
 )

@@ -143,7 +143,7 @@ class CourseCommands(commands.Cog):
             return
             
         try:
-            auth_url = self.bot.classroom_manager.get_auth_url(ctx.guild.id)
+            auth_url = self.bot.classroom_manager.get_auth_url(ctx.guild.id, user_id=ctx.author.id)
             await ctx.author.send(
                 f"**Google Classroom Setup for {ctx.guild.name}**\n"
                 "To link your server to Google Classroom, please click the link below to authorize the bot:\n"

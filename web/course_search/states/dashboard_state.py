@@ -188,6 +188,7 @@ class DashboardState(rx.State):
         except Exception as e:
             print(f"Error saving courses: {e}")
 
+    @rx.event
     def create_new_course(self):
         """Reset builder state and navigate to builder."""
         self.course_name = ""
@@ -197,6 +198,7 @@ class DashboardState(rx.State):
         self.current_editing_id = ""
         return self.navigate_to("Course Builder")
 
+    @rx.event
     def edit_course(self, course_id: str):
         """Load a course into the builder for editing."""
         course = None
@@ -210,5 +212,22 @@ class DashboardState(rx.State):
             self.course_name = course.get("title", "")
             self.course_description = course.get("description", "")
             self.course_author = course.get("author", "")
-            self.my_topics = course.get("topics", [])
-            return self.navigate_to("Course Builder")
+    @rx.event
+    def set_active_dashboard(self):
+        self.active_section = "Dashboard"
+
+    @rx.event
+    def set_active_courses(self):
+        self.active_section = "Your Courses"
+
+    @rx.event
+    def set_active_settings(self):
+        self.active_section = "Settings"
+
+    @rx.event
+    def set_active_settings_nav(self):
+        return self.navigate_to("Settings")
+
+    @rx.event
+    def navigate_sidebar(self, label: str):
+        return self.navigate_to(label)

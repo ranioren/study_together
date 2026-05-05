@@ -67,7 +67,7 @@ def course_card(course: dict) -> rx.Component:
                 class_name="flex items-center justify-between pt-4 border-t border-gray-50",
             ),
             rx.el.button(
-                rx.icon("edit", class_name="h-4 w-4 mr-2"),
+                rx.icon(tag="pencil", class_name="h-4 w-4 mr-2"),
                 "Edit Course",
                 on_click=lambda: DashboardState.edit_course(course["id"]),
                 class_name="w-full mt-4 flex items-center justify-center py-2 bg-blue-50 text-blue-600 rounded-xl font-bold hover:bg-blue-100 transition-all text-xs",

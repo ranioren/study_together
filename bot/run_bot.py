@@ -70,14 +70,22 @@ class CourseBot(commands.Bot):
 
     async def oauth_callback(self, request):
         code = request.query.get("code")
-        guild_id_str = request.query.get("state")
+        state = request.query.get("state")
         
-        if not code or not guild_id_str:
-            return web.Response(text="Missing code or guild_id in callback.", status=400)
+        if not code or not state:
+            return web.Response(text="Missing code or state in callback.", status=400)
             
         try:
+            # Parse guild_id and optional user_id from state (format: "guild_id:user_id" or just "guild_id")
+            if ":" in state:
+                guild_id_str, user_id_str = state.split(":", 1)
+            else:
+                guild_id_str, user_id_str = state, None
+                
             guild_id = int(guild_id_str)
-            success = self.classroom_manager.exchange_code(guild_id, code)
+            user_id = int(user_id_str) if user_id_str else None
+            
+            success = self.classroom_manager.exchange_code(guild_id, code, user_id=user_id)
             if success:
                 return web.Response(text="Authentication successful! You can close this window and return to Discord to use !start_course.")
             else:
@@ -91,7 +99,7 @@ class CourseBot(commands.Bot):
         
         runner = web.AppRunner(app)
         await runner.setup()
-        port = int(os.environ.get("PORT", 8080))
+        port = int(os.environ.get("PORT", 8081))
         site = web.TCPSite(runner, '0.0.0.0', port)
         await site.start()
         print(f"Web server started on port {port} for OAuth callbacks.")

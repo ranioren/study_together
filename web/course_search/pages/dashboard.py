@@ -7,7 +7,14 @@ def stat_card(item: dict) -> rx.Component:
     return rx.el.div(
         rx.el.div(
             rx.el.div(
-                rx.icon(item["icon"], class_name="h-5 w-5 text-blue-600"),
+                rx.match(
+                    item["icon"],
+                    ("users", rx.icon(tag="users", class_name="h-5 w-5 text-blue-600")),
+                    ("book-open", rx.icon(tag="book-open", class_name="h-5 w-5 text-blue-600")),
+                    ("check-circle", rx.icon(tag="check", class_name="h-5 w-5 text-blue-600")),
+                    ("dollar-sign", rx.icon(tag="dollar-sign", class_name="h-5 w-5 text-blue-600")),
+                    rx.icon(tag="circle", class_name="h-5 w-5 text-blue-600")
+                ),
                 class_name="p-2.5 bg-blue-50 rounded-xl",
             ),
             rx.el.div(
@@ -92,14 +99,11 @@ def dashboard_page() -> rx.Component:
                             class_name="w-full flex items-center justify-center py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-md hover:shadow-lg mb-3",
                         ),
                         rx.el.a(
-                            rx.el.button(
-                                rx.icon("message-square", class_name="h-4 w-4 mr-2"),
-                                "Connect to Discord!",
-                                class_name="w-full flex items-center justify-center py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-md hover:shadow-lg mb-3",
-                            ),
+                            rx.icon("message-square", class_name="h-4 w-4 mr-2"),
+                            "Connect to Discord!",
                             href="https://discord.com/oauth2/authorize?client_id=1474401683210637423",
                             is_external=True,
-                            class_name="w-full",
+                            class_name="w-full flex items-center justify-center py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-md hover:shadow-lg mb-3",
                         ),
                         rx.el.button(
                             rx.icon("users", class_name="h-4 w-4 mr-2"),
