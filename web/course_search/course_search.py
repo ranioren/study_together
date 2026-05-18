@@ -1461,3 +1461,18 @@ if os.path.exists(static_dir):
         print("Mounted static frontend to FastAPI root!")
     except Exception as e:
         print(f"Failed to mount static files: {e}")
+
+# --- Internal OAuth Proxy ---
+# Forward oauth2 callbacks from the single public port to the internal Bot web server
+from fastapi import Request
+from fastapi.responses import HTMLResponse
+import requests
+
+@app.api.get("/oauth2callback")
+async def oauth2callback_proxy(request: Request):
+    try:
+        url = f"http://127.0.0.1:8081/oauth2callback?{request.url.query}"
+        resp = requests.get(url, timeout=5)
+        return HTMLResponse(content=resp.text, status_code=resp.status_code)
+    except Exception as e:
+        return HTMLResponse(content=f"Error forwarding OAuth to Bot: {e}", status_code=500)
