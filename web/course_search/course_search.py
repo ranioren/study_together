@@ -2,7 +2,7 @@ import reflex as rx
 import psycopg2
 import os
 import os.path
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 from dotenv import load_dotenv
 import json
 import uuid
@@ -37,10 +37,9 @@ except ImportError:
 db_url = os.getenv("AIVEN_DB_URL")
 
 # Load model globally so it's cached in memory during server run
-print("Loading sentence-transformers model...")
+print("Loading fastembed model...")
 try:
-    from sentence_transformers import SentenceTransformer
-    model = SentenceTransformer("all-MiniLM-L6-v2")
+    model = TextEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
 except Exception as e:
     print(f"Model load error: {e}")
     model = None
@@ -179,7 +178,7 @@ class State(DashboardState):
             if model is None:
                 raise ValueError("Model not loaded")
                 
-            query_vector = model.encode(self.search_query).tolist()
+            query_vector = list(model.embed([self.search_query]))[0].tolist()
             
             conn = psycopg2.connect(db_url)
             with conn.cursor() as cur:

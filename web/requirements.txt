@@ -1,7 +1,7 @@
 reflex
 faker
 psycopg2-binary
-sentence-transformers
+fastembed
 python-dotenv
 google-auth-oauthlib
 google-api-python-client
