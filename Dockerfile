@@ -14,6 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Pre-build the Reflex frontend so the server starts instantly and passes DO health checks
+RUN cd web && reflex export --frontend-only --no-zip
+
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
