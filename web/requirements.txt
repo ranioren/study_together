@@ -1,5 +1,4 @@
 reflex
-click<8.3.0
 faker
 psycopg2-binary
 fastembed
@@ -11,4 +10,3 @@ pydantic<2.10.0
 urllib3<2
 sqlmodel<0.0.23
 typing_extensions<4.13.0
-typer<0.12.0
