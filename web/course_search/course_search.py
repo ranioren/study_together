@@ -1448,3 +1448,16 @@ app.add_page(
     route="/course-builder",
     on_load=[DashboardState.on_load, DashboardState.set_active_courses],
 )
+
+# --- Production Static File Serving ---
+# If we are running on DigitalOcean and have a built frontend, serve it directly from the backend!
+import os
+from fastapi.staticfiles import StaticFiles
+
+static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".web", "_static")
+if os.path.exists(static_dir):
+    try:
+        app.api.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+        print("Mounted static frontend to FastAPI root!")
+    except Exception as e:
+        print(f"Failed to mount static files: {e}")

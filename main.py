@@ -41,8 +41,7 @@ def main():
     t_bot = threading.Thread(target=run_process, args=(bot_cmd, "[BOT]"), name="BotThread")
     threads.append(t_bot)
     
-    # Start Reflex Web App
-    web_cmd = f"\"{sys.executable}\" -m reflex run --env prod --backend-port 8000 --frontend-port 3000 --backend-host 0.0.0.0"
+    web_cmd = f"\"{sys.executable}\" -m reflex run --backend-only --backend-port 8000 --backend-host 0.0.0.0"
     t_web = threading.Thread(target=run_process, args=(web_cmd, "[WEB]", "web"), name="WebThread")
     threads.append(t_web)
 
