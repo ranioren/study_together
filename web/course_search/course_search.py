@@ -1452,21 +1452,13 @@ app.add_page(
 # --- Production Static File Serving ---
 # If we are running on DigitalOcean and have a built frontend, serve it directly from the backend!
 import os
-from fastapi.staticfiles import StaticFiles
-
-static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".web", "_static")
-if os.path.exists(static_dir):
-    try:
-        app.api.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
-        print("Mounted static frontend to FastAPI root!")
-    except Exception as e:
-        print(f"Failed to mount static files: {e}")
-
 # --- Internal OAuth Proxy ---
 # Forward oauth2 callbacks from the single public port to the internal Bot web server
 from fastapi import Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.exceptions import HTTPException
 import requests
+import os
 
 @app.api.get("/oauth2callback")
 async def oauth2callback_proxy(request: Request):
@@ -1476,3 +1468,33 @@ async def oauth2callback_proxy(request: Request):
         return HTMLResponse(content=resp.text, status_code=resp.status_code)
     except Exception as e:
         return HTMLResponse(content=f"Error forwarding OAuth to Bot: {e}", status_code=500)
+
+# --- Production Static File Serving ---
+# If we are running on DigitalOcean and have a built frontend, serve it directly from the backend!
+static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".web", "_static")
+
+@app.api.exception_handler(404)
+async def custom_404_handler(request: Request, exc: HTTPException):
+    # Only serve static files if the directory exists (production mode)
+    if not os.path.exists(static_dir):
+        return HTMLResponse("404 Not Found (Static dir missing)", status_code=404)
+        
+    path = request.url.path
+    if path == "/":
+        path = "/index.html"
+    elif not path.endswith(".html") and "." not in path.split("/")[-1]:
+        path += ".html"
+        
+    file_path = os.path.join(static_dir, path.lstrip("/"))
+    if os.path.exists(file_path):
+        return FileResponse(file_path)
+    
+    index_path = os.path.join(static_dir, path.lstrip("/"), "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+        
+    not_found_page = os.path.join(static_dir, "404.html")
+    if os.path.exists(not_found_page):
+        return FileResponse(not_found_page, status_code=404)
+        
+    return HTMLResponse("404 Not Found", status_code=404)
