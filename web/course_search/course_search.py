@@ -159,6 +159,7 @@ class State(DashboardState):
                 "picture": user_info.get("picture", "")
             }
             self.load_courses()
+            return rx.redirect("/dashboard")
         except Exception as e:
             print(f"Auth error: {e}")
             
