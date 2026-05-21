@@ -9,8 +9,8 @@ def get_google_flow(creds_path, scopes, redirect_uri):
     it uses them (Production mode).
     Otherwise, it falls back to reading the local secrets file (Dev mode).
     """
-    client_id = os.getenv("GOOGLE_CLIENT_ID")
-    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip().strip('\'"')
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "").strip().strip('\'"')
     
     if client_id and client_secret:
         client_config = {
