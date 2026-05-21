@@ -85,8 +85,13 @@ class CourseBot(commands.Bot):
             guild_id = int(guild_id_str)
             user_id = int(user_id_str) if user_id_str else None
             
-            success = self.classroom_manager.exchange_code(guild_id, code, user_id=user_id)
+            success, classroom_email = self.classroom_manager.exchange_code(guild_id, code, user_id=user_id)
             if success:
+                try:
+                    from core import database
+                    database.log_identity_triangle(classroom_email=classroom_email, discord_user_id=user_id, guild_id=guild_id, action="Linked Discord to Classroom")
+                except Exception as log_err:
+                    print(f"Failed to log identity: {log_err}")
                 return web.Response(text="Authentication successful! You can close this window and return to Discord to use !start_course.")
             else:
                 return web.Response(text="Failed to exchange OAuth code.", status=500)

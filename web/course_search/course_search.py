@@ -608,6 +608,24 @@ class State(DashboardState):
                 
             service = build('classroom', 'v1', credentials=creds)
             
+            # Identity Audit Logging
+            classroom_email = None
+            try:
+                user_info_service = build('oauth2', 'v2', credentials=creds)
+                classroom_email = user_info_service.userinfo().get().execute().get("email")
+            except Exception:
+                pass
+            
+            try:
+                from core import database
+                database.log_identity_triangle(
+                    web_app_email=self.user_info.get("email"),
+                    classroom_email=classroom_email,
+                    action=f"Published Course to Google Classroom: {self.course_name}"
+                )
+            except Exception as e:
+                print(f"Audit Log Error: {e}")
+            
             self.classroom_progress.append("✅ Authenticated securely with Google Classroom.")
             yield
             

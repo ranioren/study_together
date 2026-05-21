@@ -101,6 +101,19 @@ def init_db():
         )
     ''')
 
+    # Audit log for tracking the identity triangle (WebApp, Classroom, Discord)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS identity_audit_log (
+            id SERIAL PRIMARY KEY,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            web_app_email TEXT,
+            classroom_email TEXT,
+            discord_user_id BIGINT,
+            guild_id BIGINT,
+            action TEXT
+        )
+    ''')
+
     conn.commit()
     conn.close()
 
@@ -242,3 +255,16 @@ def mark_timing_event(guild_id, event_column):
 
 # Keep memory dict for things we don't care to persist between restarts if they are short lived
 # e.g pending owner materials, pending emails
+
+def log_identity_triangle(web_app_email=None, classroom_email=None, discord_user_id=None, guild_id=None, action=None):
+    """
+    Logs an event correlating identities across the Web App, Google Classroom, and Discord.
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO identity_audit_log (web_app_email, classroom_email, discord_user_id, guild_id, action)
+        VALUES (%s, %s, %s, %s, %s)
+    ''', (web_app_email, classroom_email, discord_user_id, guild_id, action))
+    conn.commit()
+    conn.close()
