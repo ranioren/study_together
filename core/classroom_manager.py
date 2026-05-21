@@ -189,13 +189,11 @@ class ClassroomManager:
 
     def get_auth_url(self, guild_id, user_id=None):
         """Generate the OAuth2 consent URL for a guild owner to link their account."""
-        if not os.path.exists(self.credentials_path):
-            raise FileNotFoundError(f"'{self.credentials_path}' not found.")
-            
-        base_url = os.environ.get('BASE_URL', 'http://localhost:8080')
+        base_url = os.environ.get('APP_URL', 'http://localhost:3000')
         redirect_uri = f"{base_url}/oauth2callback"
         
-        flow = Flow.from_client_secrets_file(
+        from core.oauth_helper import get_google_flow
+        flow = get_google_flow(
             self.credentials_path,
             scopes=SCOPES,
             redirect_uri=redirect_uri
@@ -213,13 +211,11 @@ class ClassroomManager:
         
     def exchange_code(self, guild_id, code, user_id=None):
         """Exchange the auth code for tokens and save to DB."""
-        if not os.path.exists(self.credentials_path):
-            return False
-            
-        base_url = os.environ.get('BASE_URL', 'http://localhost:8080')
+        base_url = os.environ.get('APP_URL', 'http://localhost:3000')
         redirect_uri = f"{base_url}/oauth2callback"
         
-        flow = Flow.from_client_secrets_file(
+        from core.oauth_helper import get_google_flow
+        flow = get_google_flow(
             self.credentials_path,
             scopes=SCOPES,
             redirect_uri=redirect_uri

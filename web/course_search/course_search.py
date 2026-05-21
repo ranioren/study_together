@@ -115,7 +115,8 @@ class State(DashboardState):
         app_url = os.getenv("APP_URL", "http://localhost:3000")
         redirect_uri = f"{app_url}/callback"
         
-        flow = Flow.from_client_secrets_file(
+        from core.oauth_helper import get_google_flow
+        flow = get_google_flow(
             creds_path,
             scopes=scopes,
             redirect_uri=redirect_uri
@@ -139,7 +140,8 @@ class State(DashboardState):
         redirect_uri = f"{app_url}/callback"
         
         try:
-            flow = Flow.from_client_secrets_file(
+            from core.oauth_helper import get_google_flow
+            flow = get_google_flow(
                 creds_path,
                 scopes=scopes,
                 redirect_uri=redirect_uri
