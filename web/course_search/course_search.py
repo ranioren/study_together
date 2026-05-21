@@ -45,7 +45,7 @@ except Exception as e:
     model = None
 
 # --- Configuration ---
-LOCAL_DEV = os.getenv("LOCAL_DEV", "True").lower() == "true"
+LOCAL_DEV = os.getenv("LOCAL_DEV", "False").lower() == "true"
 # ---------------------
 
 class State(DashboardState):
