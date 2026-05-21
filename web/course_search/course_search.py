@@ -112,7 +112,7 @@ class State(DashboardState):
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
         creds_path = os.path.join(base_dir, 'config', 'webapp_credentials.json')
         scopes = ['openid', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile']
-        app_url = os.getenv("APP_URL", "http://localhost:3000")
+        app_url = os.getenv("APP_URL", "http://localhost:3000").rstrip('/')
         redirect_uri = f"{app_url}/callback"
         
         from core.oauth_helper import get_google_flow
@@ -136,7 +136,7 @@ class State(DashboardState):
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
         creds_path = os.path.join(base_dir, 'config', 'webapp_credentials.json')
         scopes = ['openid', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile']
-        app_url = os.getenv("APP_URL", "http://localhost:3000")
+        app_url = os.getenv("APP_URL", "http://localhost:3000").rstrip('/')
         redirect_uri = f"{app_url}/callback"
         
         try:
@@ -162,8 +162,7 @@ class State(DashboardState):
             return rx.redirect("/dashboard")
         except Exception as e:
             print(f"Auth error: {e}")
-            
-        return rx.redirect("/")
+            return [rx.window_alert(f"Authentication failed: {str(e)}"), rx.redirect("/")]
 
     def clear_search(self):
         self.search_query = ""
