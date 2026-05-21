@@ -112,7 +112,8 @@ class State(DashboardState):
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
         creds_path = os.path.join(base_dir, 'config', 'webapp_credentials.json')
         scopes = ['openid', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile']
-        redirect_uri = "http://localhost:3000/callback"
+        app_url = os.getenv("APP_URL", "http://localhost:3000")
+        redirect_uri = f"{app_url}/callback"
         
         flow = Flow.from_client_secrets_file(
             creds_path,
@@ -134,7 +135,8 @@ class State(DashboardState):
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
         creds_path = os.path.join(base_dir, 'config', 'webapp_credentials.json')
         scopes = ['openid', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile']
-        redirect_uri = "http://localhost:3000/callback"
+        app_url = os.getenv("APP_URL", "http://localhost:3000")
+        redirect_uri = f"{app_url}/callback"
         
         try:
             flow = Flow.from_client_secrets_file(
