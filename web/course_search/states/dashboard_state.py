@@ -34,6 +34,7 @@ class Course(TypedDict):
 
 class DashboardState(rx.State):
     active_section: str = "Dashboard"
+    oauth_code_verifier: str = ""
     user_name: str = "Local Dev User"
     user_email: str = "dev@localhost"
     user_bio: str = (

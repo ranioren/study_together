@@ -123,6 +123,8 @@ class State(DashboardState):
         )
         # Using a clean auth URL and ensuring it forces prompt
         auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
+        if hasattr(flow, 'code_verifier'):
+            self.oauth_code_verifier = getattr(flow, 'code_verifier', '')
         return rx.redirect(auth_url)
 
     def handle_callback(self):
@@ -146,6 +148,9 @@ class State(DashboardState):
                 scopes=scopes,
                 redirect_uri=redirect_uri
             )
+            if self.oauth_code_verifier:
+                flow.code_verifier = self.oauth_code_verifier
+                
             flow.fetch_token(code=code)
             credentials = flow.credentials
             
