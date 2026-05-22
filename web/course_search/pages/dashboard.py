@@ -102,7 +102,7 @@ def dashboard_page() -> rx.Component:
                             rx.icon("message-square", class_name="h-4 w-4 mr-2"),
                             "Connect to Discord!",
                             href="https://discord.com/oauth2/authorize?client_id=1474401683210637423",
-                            is_external=True,
+                            target="_blank",
                             class_name="w-full flex items-center justify-center py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-md hover:shadow-lg mb-3",
                         ),
                         rx.el.button(

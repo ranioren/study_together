@@ -29,20 +29,24 @@ def nav_item(label: str, icon: str) -> rx.Component:
 def sidebar() -> rx.Component:
     return rx.el.aside(
         rx.el.div(
-            rx.el.div(
-                rx.el.div(class_name="size-8 bg-orange-500 rounded-lg mr-3 shrink-0"),
+            rx.link(
                 rx.el.div(
-                    rx.el.span(
-                        "#LearningCommunity",
-                        class_name="text-lg font-black text-gray-900 tracking-tight",
+                    rx.image(src="/pine-tree-icon.jpg", class_name="size-8 rounded-lg mr-3 shrink-0"),
+                    rx.el.div(
+                        rx.el.span(
+                            "#LearningCommunity",
+                            class_name="text-lg font-black text-gray-900 tracking-tight",
+                        ),
+                        rx.el.span(
+                            "v2.0-stable",
+                            class_name="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full ml-2",
+                        ),
+                        class_name="flex items-center",
                     ),
-                    rx.el.span(
-                        "v2.0-stable",
-                        class_name="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full ml-2",
-                    ),
-                    class_name="flex items-center",
+                    class_name="flex items-center px-4 py-8 hover:opacity-80 transition-opacity",
                 ),
-                class_name="flex items-center px-4 py-8",
+                href="/",
+                underline="none",
             ),
             rx.el.nav(
                 nav_item("Dashboard", "layout-dashboard"),

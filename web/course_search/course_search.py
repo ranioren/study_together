@@ -103,6 +103,8 @@ class State(DashboardState):
                 "email": "dev@localhost",
                 "picture": "/alex_avatar.png"
             }
+            self.user_name = "Local Dev User"
+            self.user_email = "dev@localhost"
             self.load_courses()
             return rx.redirect("/dashboard")
 
@@ -163,6 +165,9 @@ class State(DashboardState):
                 "email": user_info.get("email", ""),
                 "picture": user_info.get("picture", "")
             }
+            self.user_name = user_info.get("name", "")
+            self.user_email = user_info.get("email", "")
+            
             self.load_courses()
             return rx.redirect("/dashboard")
         except Exception as e:
