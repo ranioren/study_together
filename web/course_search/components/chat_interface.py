@@ -55,8 +55,13 @@ def google_login_button() -> rx.Component:
 
 
 def chat_interface() -> rx.Component:
+    from course_search.course_search import State
     return rx.el.div(
-        google_login_button(),
+        rx.cond(
+            State.user_email == "dev@localhost",
+            google_login_button(),
+            rx.box()
+        ),
         rx.el.div(
             rx.el.div(
                 rx.icon("settings", class_name="h-5 w-5 text-gray-400"),

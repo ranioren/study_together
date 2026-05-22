@@ -113,7 +113,18 @@ class State(DashboardState):
         os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1" # For local testing
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
         creds_path = os.path.join(base_dir, 'config', 'webapp_credentials.json')
-        scopes = ['openid', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile']
+        scopes = [
+            'openid', 
+            'https://www.googleapis.com/auth/userinfo.email', 
+            'https://www.googleapis.com/auth/userinfo.profile',
+            'https://www.googleapis.com/auth/classroom.courses', 
+            'https://www.googleapis.com/auth/classroom.topics',
+            'https://www.googleapis.com/auth/classroom.courseworkmaterials',
+            'https://www.googleapis.com/auth/classroom.coursework.me',
+            'https://www.googleapis.com/auth/classroom.coursework.students',
+            'https://www.googleapis.com/auth/forms.body',
+            'https://www.googleapis.com/auth/drive.file'
+        ]
         app_url = os.getenv("APP_URL", "http://localhost:3000").rstrip('/')
         redirect_uri = f"{app_url}/callback"
         
@@ -139,7 +150,18 @@ class State(DashboardState):
         os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
         creds_path = os.path.join(base_dir, 'config', 'webapp_credentials.json')
-        scopes = ['openid', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile']
+        scopes = [
+            'openid', 
+            'https://www.googleapis.com/auth/userinfo.email', 
+            'https://www.googleapis.com/auth/userinfo.profile',
+            'https://www.googleapis.com/auth/classroom.courses', 
+            'https://www.googleapis.com/auth/classroom.topics',
+            'https://www.googleapis.com/auth/classroom.courseworkmaterials',
+            'https://www.googleapis.com/auth/classroom.coursework.me',
+            'https://www.googleapis.com/auth/classroom.coursework.students',
+            'https://www.googleapis.com/auth/forms.body',
+            'https://www.googleapis.com/auth/drive.file'
+        ]
         app_url = os.getenv("APP_URL", "http://localhost:3000").rstrip('/')
         redirect_uri = f"{app_url}/callback"
         
@@ -155,6 +177,7 @@ class State(DashboardState):
                 
             flow.fetch_token(code=code)
             credentials = flow.credentials
+            self.google_credentials_json = credentials.to_json()
             
             from googleapiclient.discovery import build
             user_info_service = build('oauth2', 'v2', credentials=credentials)
@@ -445,41 +468,23 @@ class State(DashboardState):
                 break
 
     def get_classroom_creds(self):
-        """Helper to get credentials for Google APIs."""
-        SCOPES = [
-            'https://www.googleapis.com/auth/classroom.courses', 
-            'https://www.googleapis.com/auth/classroom.topics',
-            'https://www.googleapis.com/auth/classroom.courseworkmaterials',
-            'https://www.googleapis.com/auth/classroom.coursework.me',
-            'https://www.googleapis.com/auth/classroom.coursework.students',
-            'https://www.googleapis.com/auth/forms.body',
-            'https://www.googleapis.com/auth/drive.file'
-        ]
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-        creds_path = os.path.join(base_dir, 'config', 'credentials.json')
-        token_path = os.path.join(base_dir, 'config', 'token.json')
-        
-        creds = None
-        if os.path.exists(token_path):
-            creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+        """Helper to get credentials for Google APIs from the active session."""
+        if not self.google_credentials_json:
+            return None, "Error: You must login with Google first."
             
-        if not creds or not creds.valid or not set(SCOPES).issubset(set(creds.scopes or [])):
+        try:
+            import json
+            from google.oauth2.credentials import Credentials
+            creds = Credentials.from_authorized_user_info(json.loads(self.google_credentials_json))
+            
             if creds and creds.expired and creds.refresh_token:
-                try:
-                    creds.refresh(Request())
-                except Exception:
-                    creds = None
-            else:
-                creds = None
+                from google.auth.transport.requests import Request
+                creds.refresh(Request())
+                self.google_credentials_json = creds.to_json()
                 
-            if not creds:
-                if not os.path.exists(creds_path):
-                    return None, f"Error: credentials.json not found in {base_dir}"
-                flow = InstalledAppFlow.from_client_secrets_file(creds_path, SCOPES)
-                creds = flow.run_local_server(port=0)
-                with open(token_path, 'w') as token:
-                    token.write(creds.to_json())
-        return creds, None
+            return creds, None
+        except Exception as e:
+            return None, f"Error parsing credentials: {e}"
 
     def create_empty_form(self, topic_id: str):
         """Create an empty Google Form for the topic."""
@@ -1330,7 +1335,7 @@ def index() -> rx.Component:
         # Top Navigation / Account Bar
         rx.box(
             rx.cond(
-                State.user_info.contains("name"),
+                State.user_email != "dev@localhost",
                 rx.hstack(
                     rx.avatar(src=State.user_info["picture"], size="2", radius="full", border="2px solid white"),
                     rx.text(f"Welcome, {State.user_info['name']}", font_weight="700", color="gray.800"),
